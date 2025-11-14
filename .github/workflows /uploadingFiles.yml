@@ -3,7 +3,7 @@ name: Auto Wake and Refresh All Services
 on:
   push:
     branches:
-      - main  # or master if that’s your repo default
+      - main   # or master if that’s your default branch
 
 jobs:
   wake-and-refresh:
@@ -15,19 +15,19 @@ jobs:
           echo "📡 Waking up Config Server..."
           curl -s -o /dev/null https://funmarketconfigserver-dckt.onrender.com/actuator/health || true
 
-      - name: Step 2 - Wake up all Microservices
+      - name: Step 2 - Wake up Stock Market DB Service
         run: |
-          echo "📡 Waking up Stock market DB Service..."
+          echo "📡 Waking up Stock Market DB Service..."
           curl -s -o /dev/null https://funmarketdb.onrender.com/actuator/health || true
-		  
-		   - name: Step 3 - Wake up all Microservices
+
+      - name: Step 3 - Wake up Git Reader Service
         run: |
-          echo "📡 Waking up Stock market git reader service..."
+          echo "📡 Waking up Git Reader Service..."
           curl -s -o /dev/null https://funmarketgitreader.onrender.com/actuator/health || true
 
       - name: Step 4 - Wait for all services to fully start (5 min 00 sec)
         run: |
-          echo "⏳ Waiting 130 seconds for all Render services to finish waking up..."
+          echo "⏳ Waiting 300 seconds for all Render services to finish waking up..."
           sleep 300
 
       - name: Step 5 - Stabilize network for 20 seconds
@@ -35,15 +35,12 @@ jobs:
           echo "💤 Sleeping for 20 seconds before triggering refresh..."
           sleep 20
 
-	  - name ✅ Done
-		run echo "All services are awake and configurations refreshed!"
-		
-      - name: Step 6 - Trigger Config Server Bus Refresh
+      - name: Step 6 - Trigger Git Reader Refresh
         run: |
-          echo "🚀 Sending bus refresh to Config Server..."
+          echo "🚀 Triggering Git Reader CSV → Mongo Refresh..."
           curl -X POST \
             -H "Content-Type: application/json" \
-			https://funmarketgitreader.onrender.com/fun-market/git-reader/git-read || true
+            https://funmarketgitreader.onrender.com/fun-market/git-reader/git-read || true
 
-      - name: ✅ Done
-        run: echo "🎉 Data inseration Completed successfully!..."
+      - name: Step 7 - Done
+        run: echo "🎉 Data insertion completed successfully!"
