@@ -10,17 +10,17 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Step 1 - Wake up Config Server (non-blocking)
+      - name: Step 1 - Wake up Config Server
         run: |
           echo "📡 Waking up Config Server..."
           curl -s -o /dev/null https://funmarketconfigserver-dckt.onrender.com/actuator/health &
 
-      - name: Step 2 - Wake up DB Service (non-blocking)
+      - name: Step 2 - Wake up DB Service
         run: |
           echo "📡 Waking up Stock Market DB Service..."
           curl -s -o /dev/null https://funmarketdb.onrender.com/actuator/health &
 
-      - name: Step 3 - Wake up Git Reader Service (non-blocking)
+      - name: Step 3 - Wake up Git Reader Service
         run: |
           echo "📡 Waking up Git Reader Service..."
           curl -s -o /dev/null https://funmarketgitreader.onrender.com/actuator/health &
