@@ -13,19 +13,19 @@ jobs:
       - name: Step 1 - Wake up Config Server
         run: |
           echo "📡 Waking up Config Server..."
-          curl -s -o /dev/null https://funmarketconfigserver-dckt.onrender.com/actuator/health || true
+          curl -s -o /dev/null https://funmarketconfigserver-dckt.onrender.com/actuator/health &
 
-      - name: Step 2 - Wake up Stock Market DB Service
+      - name: Step 2 - Wake up DB Service
         run: |
           echo "📡 Waking up Stock Market DB Service..."
-          curl -s -o /dev/null https://funmarketdb.onrender.com/actuator/health || true
+          curl -s -o /dev/null https://funmarketdb.onrender.com/actuator/health &
 
       - name: Step 3 - Wake up Git Reader Service
         run: |
           echo "📡 Waking up Git Reader Service..."
-          curl -s -o /dev/null https://funmarketgitreader.onrender.com/actuator/health || true
+          curl -s -o /dev/null https://funmarketgitreader.onrender.com/actuator/health &
 
-      - name: Step 4 - Wait for all services to fully start
+      - name: Step 4 - Wait 5 minutes for all services to start
         run: |
           echo "⏳ Waiting 300 seconds..."
           sleep 300
@@ -35,10 +35,37 @@ jobs:
           echo "💤 Sleeping 20 seconds..."
           sleep 20
 
-      - name: Step 6 - Trigger Git Reader Refresh
+      - name: Step 6 - Trigger Git Reader Refresh and capture response
+        id: gitreader
         run: |
-          echo "🚀 Triggering refresh..."
-          curl -X POST https://funmarketgitreader.onrender.com/fun-market/git-reader/git-read || true
+          echo "🚀 Triggering Git Reader CSV → Mongo Refresh..."
+          RESPONSE=$(curl -s -X POST https://funmarketgitreader.onrender.com/fun-market/git-reader/read || echo "Request failed")
+          echo "Server response: $RESPONSE"
+          # Export as GitHub Action output
+          echo "response=$RESPONSE" >> $GITHUB_OUTPUT
 
-      - name: Step 7 - Done
-        run: echo "🎉 Completed!"
+      - name: Step 7 - Send response via email
+        uses: dawidd6/action-send-mail@v3
+        with:
+          server: ${{ secrets.SMTP_SERVER }}
+          port: ${{ secrets.SMTP_PORT }}
+          username: ${{ secrets.SMTP_USERNAME }}
+          password: ${{ secrets.SMTP_PASSWORD }}
+          secure: true
+          subject: Fun Market - Git Reader Refresh Result
+          to: funstockmarket365@gmail.com
+          from: "Fun Market Bot <funstockmarket365.notify@outlook.com>"
+          body: |
+            Hello fun market team,
+
+            The Git Reader API has finished running.
+
+            Here is the response returned by the server:
+
+            ${{ steps.gitreader.outputs.response }}
+
+            Regards,
+            Fun Market Automation System
+
+      - name: Step 8 - Done
+        run: echo "🎉 Completed Successfully!"
