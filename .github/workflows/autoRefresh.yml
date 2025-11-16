@@ -28,7 +28,7 @@ jobs:
       - name: Step 4 - Wait 5 minutes for all services to start
         run: |
           echo "⏳ Waiting 300 seconds..."
-          sleep 300
+          sleep 270
 
       - name: Step 5 - Stabilize network
         run: |
@@ -39,11 +39,20 @@ jobs:
         id: gitreader
         run: |
           echo "🚀 Triggering Git Reader CSV → Mongo Refresh..."
-          RESPONSE=$(curl -s -X POST https://funmarketgitreader.onrender.com/fun-market/git-reader/read || echo "Request failed")
-          echo "Server response: $RESPONSE"
+          RESPONSE=$(curl -s -X POST https://funmarketgitreader.onrender.com/fun-market/git-reader/read || echo '{"message":"Request failed","data":[],"httpStatusCode":500}')
+          echo "Raw server response: $RESPONSE"
           echo "response=$RESPONSE" >> $GITHUB_OUTPUT
 
-      - name: Step 7 - Send response via email
+      # 🔍 Parse JSON Response
+      - name: Step 7 - Parse response JSON
+        id: parsed
+        run: |
+          echo "🔍 Parsing API response..."
+          echo "message=${{ fromJson(steps.gitreader.outputs.response).message }}" >> $GITHUB_OUTPUT
+          echo "status=${{ fromJson(steps.gitreader.outputs.response).httpStatusCode }}" >> $GITHUB_OUTPUT
+          echo "data=${{ toJson(fromJson(steps.gitreader.outputs.response).data) }}" >> $GITHUB_OUTPUT
+
+      - name: Step 8 - Send response via email
         uses: dawidd6/action-send-mail@v3
         with:
           server_address: ${{ secrets.SMTP_SERVER }}
@@ -53,18 +62,23 @@ jobs:
           password: ${{ secrets.SMTP_PASSWORD }}
           subject: Fun Market - Git Reader Refresh Result
           to: funstockmarket365@gmail.com
-          from: "Fun Market Bot <funstockmarket365.notify@outlook.com>"
+          from: "Fun Market Bot <sunnyharsha320@gmail.com>"
           body: |
-            Hello fun market team,
+            Hello Fun Market Team,
 
-            The Git Reader API has finished running.
+            The Git Reader automated refresh has completed. Below are the details returned by the server:
 
-            Here is the response returned by the server:
+            **Message:**  
+            ${{ steps.parsed.outputs.message }}
 
-            ${{ steps.gitreader.outputs.response }}
+            **Status Code:**  
+            ${{ steps.parsed.outputs.status }}
 
-            Regards,
+            **Data:**  
+            ${{ steps.parsed.outputs.data }}
+
+            Regards,  
             Fun Market Automation System
 
-      - name: Step 8 - Done
+      - name: Step 9 - Done
         run: echo "🎉 Completed Successfully!"
