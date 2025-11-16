@@ -25,15 +25,15 @@ jobs:
           echo "📡 Waking up Git Reader Service..."
           curl -s -o /dev/null https://funmarketgitreader.onrender.com/actuator/health &
 
-      - name: Step 4 - Wait 5 minutes for all services to start
+      - name: Step 4 - Wait 4.5 minutes for all services to start
         run: |
-          echo "⏳ Waiting 300 seconds..."
+          echo "⏳ Waiting 270 seconds..."
           sleep 300
 
       - name: Step 5 - Stabilize network
         run: |
-          echo "💤 Sleeping 20 seconds..."
-          sleep 20
+          echo "💤 Sleeping 10 seconds..."
+          sleep 10
 
       - name: Step 6 - Trigger Git Reader Refresh and capture response
         id: gitreader
@@ -69,7 +69,7 @@ jobs:
           username: ${{ secrets.SMTP_USERNAME }}
           password: ${{ secrets.SMTP_PASSWORD }}
           subject: Fun Market - Git Reader Refresh Result
-          to: funstockmarket365@gmail.com
+          to: funstockmarket365@gmail.com, katukojwalaharshavardhan97@gmail.com, ankithachikki123@gmail.com
           from: "Fun Market Bot <sunnyharsha320@gmail.com>"
           body: |
             Hello Fun Market Team,
