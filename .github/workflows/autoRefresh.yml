@@ -51,7 +51,6 @@ jobs:
           secure: true
           username: ${{ secrets.SMTP_USERNAME }}
           password: ${{ secrets.SMTP_PASSWORD }}
-
           subject: Fun Market - Git Reader Refresh Result
           to: funstockmarket365@gmail.com
           from: "Fun Market Bot <funstockmarket365.notify@outlook.com>"
