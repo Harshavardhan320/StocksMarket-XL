@@ -41,17 +41,17 @@ jobs:
           echo "🚀 Triggering Git Reader CSV → Mongo Refresh..."
           RESPONSE=$(curl -s -X POST https://funmarketgitreader.onrender.com/fun-market/git-reader/read || echo "Request failed")
           echo "Server response: $RESPONSE"
-          # Export as GitHub Action output
           echo "response=$RESPONSE" >> $GITHUB_OUTPUT
 
       - name: Step 7 - Send response via email
         uses: dawidd6/action-send-mail@v3
         with:
-          server: ${{ secrets.SMTP_SERVER }}
-          port: ${{ secrets.SMTP_PORT }}
+          server_address: ${{ secrets.SMTP_SERVER }}
+          server_port: ${{ secrets.SMTP_PORT }}
+          secure: true
           username: ${{ secrets.SMTP_USERNAME }}
           password: ${{ secrets.SMTP_PASSWORD }}
-          secure: true
+
           subject: Fun Market - Git Reader Refresh Result
           to: funstockmarket365@gmail.com
           from: "Fun Market Bot <funstockmarket365.notify@outlook.com>"
