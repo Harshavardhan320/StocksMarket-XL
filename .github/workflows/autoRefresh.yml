@@ -8,6 +8,8 @@ on:
 
 jobs:
   wake-and-refresh:
+    # Ensure job runs ONLY on main branch
+    if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
 
     steps:
@@ -26,40 +28,36 @@ jobs:
           echo "📡 Waking up Git Reader Service..."
           curl -s -o /dev/null https://funmarketgitreader.onrender.com/actuator/health &
 
-      - name: Step 4 - Wait 4.5 minutes for all services to start
+      - name: Step 4 - Wait 4.5 minutes
         run: |
           echo "⏳ Waiting 270 seconds..."
-          sleep 300
+          sleep 270
 
       - name: Step 5 - Stabilize network
         run: |
           echo "💤 Sleeping 10 seconds..."
           sleep 10
 
-      - name: Step 6 - Trigger Git Reader Refresh and capture response
+      - name: Step 6 - Trigger Git Reader Refresh
         id: gitreader
         run: |
-          echo "🚀 Triggering Git Reader CSV → Mongo Refresh..."
+          echo "🚀 Triggering Git Reader Refresh..."
           RESPONSE=$(curl -s -X POST https://funmarketgitreader.onrender.com/fun-market/git-reader/read || echo '{"message":"Request failed","data":[],"httpStatusCode":500}')
-          echo "Raw server response: $RESPONSE"
           echo "response=$RESPONSE" >> $GITHUB_OUTPUT
 
-      - name: Step 7 - Parse response JSON
+      - name: Step 7 - Parse Response JSON
         id: parsed
         run: |
-          echo "🔍 Parsing API response..."
-
           MESSAGE="${{ fromJson(steps.gitreader.outputs.response).message }}"
           STATUS="${{ fromJson(steps.gitreader.outputs.response).httpStatusCode }}"
           DATA_RAW='${{ toJson(fromJson(steps.gitreader.outputs.response).data) }}'
-
           DATA=$(echo "$DATA_RAW" | tr -d '\n' | tr -d '\r')
 
           echo "message=$MESSAGE" >> $GITHUB_OUTPUT
           echo "status=$STATUS" >> $GITHUB_OUTPUT
           echo "data=$DATA" >> $GITHUB_OUTPUT
 
-      - name: Step 8 - Send Response Email
+      - name: Step 8 - Send Email Report
         uses: dawidd6/action-send-mail@v3
         with:
           server_address: ${{ secrets.SMTP_SERVER }}
@@ -67,13 +65,13 @@ jobs:
           secure: false
           username: ${{ secrets.SMTP_USERNAME }}
           password: ${{ secrets.SMTP_PASSWORD }}
-          subject: Fun Market - Git Reader Refresh Result
+          subject: Fun Market - Nightly Git Reader Refresh Result
           to: funstockmarket365@gmail.com, katukojwalaharshavardhan97@gmail.com, ankithachikki123@gmail.com
           from: "Fun Market Bot <sunnyharsha320@gmail.com>"
           body: |
             Hello Fun Market Team,
 
-            The automated Git Reader refresh task executed at **11:30 PM IST (Mon–Fri)** has completed. Below are the details:
+            The scheduled Git Reader refresh (11:30 PM IST, Mon–Fri) has completed.
 
             **Message:**  
             ${{ steps.parsed.outputs.message }}
