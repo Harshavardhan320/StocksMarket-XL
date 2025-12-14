@@ -1,0 +1,47 @@
+name: Create Daily Holdings Branch
+
+on:
+  schedule:
+    - cron: '0 23 * * 0-4'   # 4:30 AM IST (Mon–Fri)
+  workflow_dispatch:
+
+jobs:
+  create-branch:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout main
+        uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+
+      - name: Create holdings branch
+        id: branch
+        run: |
+          DATE=$(date -u -d "+5 hours 30 minutes" +"%d-%b-%Y" | tr '[:upper:]' '[:lower:]')
+          BRANCH="holdings-${DATE}"
+
+          git checkout -b "$BRANCH"
+          git push origin "$BRANCH"
+
+          echo "branch=$BRANCH" >> $GITHUB_OUTPUT
+
+      - name: Notify Telegram (Branch Created)
+        run: |
+          MESSAGE=$(cat <<EOF
+          📌 *Daily Holdings Branch Created*
+
+          Branch Name: \`${{ steps.branch.outputs.branch }}\`
+          Date & Time: $(date -u -d "+5 hours 30 minutes" "+%d-%b-%Y %I:%M %p IST")
+          
+          Status: Successfully created.
+          
+          This branch is available for today’s holdings updates.
+          EOF
+          )
+
+          curl -s -X POST "https://api.telegram.org/bot${{ secrets.TELEGRAM_BOT_TOKEN }}/sendMessage" \
+            -d chat_id="${{ secrets.TELEGRAM_CHAT_ID }}" \
+            -d parse_mode=Markdown \
+            -d text="$MESSAGE"
