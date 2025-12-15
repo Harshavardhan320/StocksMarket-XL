@@ -1,8 +1,11 @@
 name: Create Daily Holdings Branch
 
+permissions:
+  contents: write
+
 on:
   schedule:
-    - cron: '0 23 * * 0-4'   # 4:30 AM IST (Mon–Fri)
+    - cron: '0 5 * * 1-5'   # 4:30 AM IST (Mon–Fri)
   workflow_dispatch:
 
 jobs:
