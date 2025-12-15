@@ -1,8 +1,11 @@
 name: Cleanup Daily Holdings Branch
 
+permissions:
+  contents: write
+
 on:
   schedule:
-    - cron: '0 18 * * 1-5'   # 11:30 PM IST (Mon–Fri)
+    - cron: '15 17 * * 1-5'   # 10:45 PM IST (Mon–Fri)
   workflow_dispatch:
 
 jobs:
