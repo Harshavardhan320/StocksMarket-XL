@@ -13,10 +13,11 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout main
+      - name: Checkout repository
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
+          persist-credentials: true
 
       - name: Check and delete branch if unused
         id: cleanup
@@ -26,24 +27,26 @@ jobs:
 
           git fetch origin
 
-          if ! git show-ref --verify --quiet refs/remotes/origin/$BRANCH; then
+          if ! git show-ref --verify --quiet "refs/remotes/origin/$BRANCH"; then
             echo "exists=false" >> $GITHUB_OUTPUT
+            echo "branch=$BRANCH" >> $GITHUB_OUTPUT
             exit 0
           fi
 
-          COMMITS=$(git rev-list --count origin/main..origin/$BRANCH)
+          COMMITS=$(git rev-list --count "origin/main..origin/$BRANCH")
 
           if [ "$COMMITS" -eq 0 ]; then
-            git push origin --delete $BRANCH
+            git push origin --delete "$BRANCH"
             echo "deleted=true" >> $GITHUB_OUTPUT
           else
             echo "deleted=false" >> $GITHUB_OUTPUT
           fi
 
+          echo "exists=true" >> $GITHUB_OUTPUT
           echo "branch=$BRANCH" >> $GITHUB_OUTPUT
 
       - name: Notify Telegram (Deletion Status)
-        if: steps.cleanup.outputs.exists != 'false'
+        if: steps.cleanup.outputs.exists == 'true'
         run: |
           if [ "${{ steps.cleanup.outputs.deleted }}" = "true" ]; then
             STATUS="Branch had no commits and was safely deleted."
@@ -51,14 +54,17 @@ jobs:
             STATUS="Branch contains commits and was retained."
           fi
 
-          MESSAGE="📊 *Daily Holdings Branch Review*
+           MESSAGE=$(cat <<EOF
+           📊 *Daily Holdings Branch Review*
 
-          Branch Name: \`${{ steps.cleanup.outputs.branch }}\`
-          Date & Time: $(date -u -d '+5 hours 30 minutes' '+%d-%b-%Y %I:%M %p IST')
-          
-          Result: $STATUS"
+            Branch Name: \`${{ steps.cleanup.outputs.branch }}\`
+          Date & Time: $(date -u -d "+5 hours 30 minutes" "+%d-%b-%Y %I:%M %p IST")
+
+           Result: $STATUS
+           EOF
+          )
 
           curl -s -X POST "https://api.telegram.org/bot${{ secrets.TELEGRAM_BOT_TOKEN }}/sendMessage" \
-          -d chat_id="${{ secrets.TELEGRAM_CHAT_ID }}" \
-          -d parse_mode=Markdown \
-          -d text="$MESSAGE"
+            -d chat_id="${{ secrets.TELEGRAM_CHAT_ID }}" \
+            -d parse_mode=Markdown \
+            -d text="$MESSAGE"
