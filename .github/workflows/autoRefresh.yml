@@ -8,6 +8,7 @@ on:
 
 jobs:
   wake-and-refresh:
+    # Ensure it runs only on main branch
     if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
 
@@ -36,7 +37,8 @@ jobs:
         id: gitreader
         run: |
           echo "🚀 Triggering Git Reader CSV → Mongo Refresh..."
-          RESPONSE=$(curl -s -X POST https://funmarketgitreader.onrender.com/fun-market/git-reader/read || echo '{"message":"Request failed","data":[],"httpStatusCode":500}')
+          RESPONSE=$(curl -s -X POST https://funmarketgitreader.onrender.com/fun-market/git-reader/read \
+            || echo '{"message":"Request failed","data":[],"httpStatusCode":500}')
           echo "Raw server response: $RESPONSE"
           echo "response=$RESPONSE" >> $GITHUB_OUTPUT
 
@@ -68,17 +70,45 @@ jobs:
 
             The scheduled Git Reader refresh executed at **11:45 PM IST (Mon–Fri)** has completed.
 
-                **Message:**  
-                ${{ steps.parsed.outputs.message }}
+            Message:
+            ${{ steps.parsed.outputs.message }}
 
-                **Status:**  
-                ${{ steps.parsed.outputs.status }}
+            Status:
+            ${{ steps.parsed.outputs.status }}
 
-                **Data:**  
-                ${{ steps.parsed.outputs.data }}
+            Data:
+            ${{ steps.parsed.outputs.data }}
 
-            Regards,  
+            Regards,
             Fun Market Automation System
+
+      - name: Step 8 - Send Telegram Message
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: |
+              TELEGRAM_MESSAGE=$(cat <<EOF
+                📢 *Fun Market – Git Reader Refresh Result*
+                
+                🕒 *Execution Time:* 11:45 PM IST (Mon–Fri)
+                
+                📝 *Message:*
+                ${{ steps.parsed.outputs.message }}
+                
+                📊 *Status Code:*
+                ${{ steps.parsed.outputs.status }}
+                
+                📂 *Data:*
+                ${{ steps.parsed.outputs.data }}
+                
+                🤖 _Fun Market Automation System_
+                EOF
+              )
+      
+              curl -s -X POST "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" \
+                -d chat_id="${TELEGRAM_CHAT_ID}" \
+                -d parse_mode=Markdown \
+                --data-urlencode text="$TELEGRAM_MESSAGE"
 
       - name: Step 9 - Done
         run: echo "🎉 Completed Successfully!"
