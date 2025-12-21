@@ -55,13 +55,13 @@ jobs:
           fi
 
            MESSAGE=$(cat <<EOF
-           📊 *Daily Holdings Branch Review*
-
-            Branch Name: \`${{ steps.cleanup.outputs.branch }}\`
-          Date & Time: $(date -u -d "+5 hours 30 minutes" "+%d-%b-%Y %I:%M %p IST")
-
-           Result: $STATUS
-           EOF
+             📊 *Daily Holdings Branch Review*
+  
+              Branch Name: \`${{ steps.cleanup.outputs.branch }}\`
+            Date & Time: $(date -u -d "+5 hours 30 minutes" "+%d-%b-%Y %I:%M %p IST")
+  
+             Result: $STATUS
+             EOF
           )
 
           curl -s -X POST "https://api.telegram.org/bot${{ secrets.TELEGRAM_BOT_TOKEN }}/sendMessage" \
