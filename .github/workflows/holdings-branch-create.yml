@@ -5,7 +5,7 @@ permissions:
 
 on:
   schedule:
-    - cron: '0 5 * * 1-5'   # 10:30 AM IST (Mon–Fri)
+    - cron: '0 6 * * 1-5'   # 11:30 AM IST (Mon–Fri)
   workflow_dispatch:
 
 jobs:
@@ -33,14 +33,14 @@ jobs:
 
       - name: Notify Telegram (Branch Created)
         run: |
-            MESSAGE=$(cat <<EOF
+          MESSAGE=$(cat <<EOF
             📌 *Daily Holdings Branch Created*
-  
+            
             Branch Name: \`${{ steps.branch.outputs.branch }}\`
             Date & Time: $(date -u -d "+5 hours 30 minutes" "+%d-%b-%Y %I:%M %p IST")
-  
+            
             Status: Successfully created.
-  
+            
             This branch is available for today’s holdings updates.
             EOF
           )
