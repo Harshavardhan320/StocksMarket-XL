@@ -1,11 +1,11 @@
-name: Cleanup Daily Holdings Branch
+name: Delete Empty Daily Holdings Branch
 
 permissions:
   contents: write
 
 on:
   schedule:
-    - cron: '15 17 * * 1-5'   # 10:45 PM IST (Mon–Fri)
+    - cron: '15 18 * * 1-5'   # 11:45 PM IST (Mon–Fri)
   workflow_dispatch:
 
 jobs:
@@ -13,58 +13,51 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout repository
+      - name: Checkout main
         uses: actions/checkout@v4
         with:
+          ref: main
           fetch-depth: 0
           persist-credentials: true
 
-      - name: Check and delete branch if unused
-        id: cleanup
+      - name: Check and delete empty holdings branch
+        shell: bash
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
         run: |
           DATE=$(date -u -d "+5 hours 30 minutes" +"%d-%b-%Y" | tr '[:upper:]' '[:lower:]')
           BRANCH="holdings-${DATE}"
 
-          git fetch origin
+          echo "🔍 Checking branch: $BRANCH"
 
-          if ! git show-ref --verify --quiet "refs/remotes/origin/$BRANCH"; then
-            echo "exists=false" >> $GITHUB_OUTPUT
-            echo "branch=$BRANCH" >> $GITHUB_OUTPUT
+          if ! git ls-remote --heads origin "$BRANCH" | grep -q "$BRANCH"; then
+            echo "ℹ️ Branch does not exist. Nothing to do."
             exit 0
           fi
 
-          COMMITS=$(git rev-list --count "origin/main..origin/$BRANCH")
+          git fetch origin "$BRANCH"
 
-          if [ "$COMMITS" -eq 0 ]; then
+          COMMIT_COUNT=$(git rev-list --count origin/main..origin/"$BRANCH")
+
+          if [ "$COMMIT_COUNT" -eq 0 ]; then
+            echo "🗑️ No commits found. Deleting branch."
+
             git push origin --delete "$BRANCH"
-            echo "deleted=true" >> $GITHUB_OUTPUT
+
+            MESSAGE=$(
+              printf "**🗑️ Empty Holdings Branch Deleted**\n\n"
+              printf "**Branch Name:** \`%s\`\n" "$BRANCH"
+              printf "**Date & Time:** %s\n\n" "$(date -u -d '+5 hours 30 minutes' '+%d-%b-%Y %I:%M %p IST')"
+              printf "**Reason:** No commits were made today.\n\n"
+              printf "_— Fun Market_"
+            )
+
+            curl -s -X POST "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" \
+              -d chat_id="${TELEGRAM_CHAT_ID}" \
+              -d parse_mode=Markdown \
+              --data-urlencode text="$MESSAGE"
+
           else
-            echo "deleted=false" >> $GITHUB_OUTPUT
+            echo "✅ Branch has commits ($COMMIT_COUNT). Keeping it."
           fi
-
-          echo "exists=true" >> $GITHUB_OUTPUT
-          echo "branch=$BRANCH" >> $GITHUB_OUTPUT
-
-      - name: Notify Telegram (Deletion Status)
-        if: steps.cleanup.outputs.exists == 'true'
-        run: |
-          if [ "${{ steps.cleanup.outputs.deleted }}" = "true" ]; then
-            STATUS="Branch had no commits and was safely deleted."
-          else
-            STATUS="Branch contains commits and was retained."
-          fi
-
-           MESSAGE=$(cat <<EOF
-             📊 *Daily Holdings Branch Review*
-  
-              Branch Name: \`${{ steps.cleanup.outputs.branch }}\`
-            Date & Time: $(date -u -d "+5 hours 30 minutes" "+%d-%b-%Y %I:%M %p IST")
-  
-             Result: $STATUS
-             EOF
-          )
-
-          curl -s -X POST "https://api.telegram.org/bot${{ secrets.TELEGRAM_BOT_TOKEN }}/sendMessage" \
-            -d chat_id="${{ secrets.TELEGRAM_CHAT_ID }}" \
-            -d parse_mode=Markdown \
-            -d text="$MESSAGE"
