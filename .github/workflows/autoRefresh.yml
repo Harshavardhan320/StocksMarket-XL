@@ -1,74 +1,79 @@
 name: Auto Wake and Refresh All Services
 
+permissions:
+  contents: read
+
 on:
   schedule:
-    # Run Monday–Friday at 11:45 PM IST
-    # IST = UTC + 5:30 → 23:45 IST = 18:15 UTC
+    # 11:45 PM IST = 18:15 UTC
     - cron: "15 18 * * 1-5"
+  workflow_dispatch:
 
 jobs:
   wake-and-refresh:
-    # Ensure it runs only on main branch
-    if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
 
     steps:
-      - name: Step 1 - Wake up Config Server
+      - name: Step 1 - Wake Config Server
         run: |
-          echo "📡 Waking up Config Server..."
-          curl -s -o /dev/null https://funmarketconfigserver-dckt.onrender.com/actuator/health &
+          echo "📡 Waking Config Server"
+          curl -s https://funmarketconfigserver-dckt.onrender.com/actuator/health
 
-      - name: Step 2 - Wake up DB Service
+      - name: Step 2 - Wake DB Connector
         run: |
-          echo "📡 Waking up Stock Market DB Service..."
-          curl -s -o /dev/null https://funmarketdb.onrender.com/actuator/health &
+          echo "📡 Waking DB Connector"
+          curl -s https://funmarketdb.onrender.com/actuator/health
 
-      - name: Step 3 - Wake up Git Reader Service
+      - name: Step 3 - Wake Git Reader
         run: |
-          echo "📡 Waking up Git Reader Service..."
-          curl -s -o /dev/null https://funmarketgitreader.onrender.com/actuator/health &
+          echo "📡 Waking Git Reader"
+          curl -s https://funmarketgitreader.onrender.com/actuator/health
 
-      - name: Step 4 - Wait 5 minutes for services to start
+      - name: Step 4 - Wait for services
         run: |
-          echo "⏳ Waiting 300 seconds..."
+          echo "⏳ Waiting 5 minutes..."
           sleep 300
 
-      - name: Step 5 - Trigger Git Reader Refresh
-        id: gitreader
+      - name: Step 5 - Trigger Git Reader Load
+        id: load
         run: |
-          echo "🚀 Triggering Git Reader CSV → Mongo Refresh..."
-          RESPONSE=$(curl -s -X POST https://funmarketgitreader.onrender.com/fun-market/git-reader/read \
-            || echo '{"message":"Request failed","data":[],"httpStatusCode":500}')
-          echo "Raw server response: $RESPONSE"
-          echo "response=$RESPONSE" >> $GITHUB_OUTPUT
+          echo "🚀 Triggering Git Reader load"
 
-      - name: Step 6 - Parse Response JSON
+          RESPONSE=$(curl -s -X POST https://funmarketgitreader.onrender.com/fun-market/git-reader/read)
+
+          echo "$RESPONSE" > response.json
+          echo "response<<EOF" >> $GITHUB_OUTPUT
+          cat response.json >> $GITHUB_OUTPUT
+          echo "EOF" >> $GITHUB_OUTPUT
+
+      - name: Step 6 - Parse Response
         id: parsed
         run: |
-          MESSAGE="${{ fromJson(steps.gitreader.outputs.response).message }}"
-          STATUS="${{ fromJson(steps.gitreader.outputs.response).httpStatusCode }}"
-          DATA_RAW='${{ toJson(fromJson(steps.gitreader.outputs.response).data) }}'
-          DATA=$(echo "$DATA_RAW" | tr -d '\n' | tr -d '\r')
+          MESSAGE=$(jq -r '.message // "No message"' response.json)
+          STATUS=$(jq -r '.httpStatusCode // "NA"' response.json)
+          FILES=$(jq -r '.data[]? // empty' response.json | tr '\n' ', ')
+
+          [ -z "$FILES" ] && FILES="No files loaded"
 
           echo "message=$MESSAGE" >> $GITHUB_OUTPUT
           echo "status=$STATUS" >> $GITHUB_OUTPUT
-          echo "data=$DATA" >> $GITHUB_OUTPUT
+          echo "files=$FILES" >> $GITHUB_OUTPUT
 
       - name: Step 7 - Send Email
         uses: dawidd6/action-send-mail@v3
         with:
           server_address: ${{ secrets.SMTP_SERVER }}
           server_port: ${{ secrets.SMTP_PORT }}
-          secure: false
           username: ${{ secrets.SMTP_USERNAME }}
           password: ${{ secrets.SMTP_PASSWORD }}
-          subject: Fun Market - Git Reader Refresh Result
-          to: funstockmarket365@gmail.com, katukojwalaharshavardhan97@gmail.com, ankithachikki123@gmail.com
-          from: "Fun Market Bot <sunnyharsha320@gmail.com>"
+          secure: false
+          subject: Fun Market – Git Data Load Report
+          to: funstockmarket365@gmail.com,katukojwalaharshavardhan97@gmail.com,ankithachikki123@gmail.com
+          from: Fun Market Bot <sunnyharsha320@gmail.com>
           body: |
-            Hello Fun Market Team,
+            Hello Team,
 
-            The scheduled Git Reader refresh executed at **11:45 PM IST (Mon–Fri)** has completed.
+            Git Reader refresh completed at 11:45 PM IST.
 
             Message:
             ${{ steps.parsed.outputs.message }}
@@ -76,8 +81,8 @@ jobs:
             Status:
             ${{ steps.parsed.outputs.status }}
 
-            Data:
-            ${{ steps.parsed.outputs.data }}
+            Files Loaded:
+            ${{ steps.parsed.outputs.files }}
 
             Regards,
             Fun Market Automation System
@@ -87,28 +92,19 @@ jobs:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
         run: |
-              TELEGRAM_MESSAGE=$(cat <<EOF
-                📢 *Fun Market – Git Reader Refresh Result*
-                
-                🕒 *Execution Time:* 11:45 PM IST (Mon–Fri)
-                
-                📝 *Message:*
-                ${{ steps.parsed.outputs.message }}
-                
-                📊 *Status Code:*
-                ${{ steps.parsed.outputs.status }}
-                
-                📂 *Data:*
-                ${{ steps.parsed.outputs.data }}
-                
-                🤖 _Fun Market Automation System_
-                EOF
-              )
-      
-              curl -s -X POST "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" \
-                -d chat_id="${TELEGRAM_CHAT_ID}" \
-                -d parse_mode=Markdown \
-                --data-urlencode text="$TELEGRAM_MESSAGE"
+          MESSAGE=$(
+            printf "**📢 Fun Market – Git Data Load Report**\n\n"
+            printf "**Time:** 11:45 PM IST\n\n"
+            printf "**Message:** %s\n" "${{ steps.parsed.outputs.message }}"
+            printf "**Status:** %s\n\n" "${{ steps.parsed.outputs.status }}"
+            printf "**Files Loaded:**\n%s\n\n" "${{ steps.parsed.outputs.files }}"
+            printf "_— Fun Market_"
+          )
+
+          curl -s -X POST "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" \
+            -d chat_id="${TELEGRAM_CHAT_ID}" \
+            -d parse_mode=Markdown \
+            --data-urlencode text="$MESSAGE"
 
       - name: Step 9 - Done
-        run: echo "🎉 Completed Successfully!"
+        run: echo "✅ All services refreshed successfully"
