@@ -6,7 +6,7 @@ permissions:
 on:
   schedule:
     # 11:45 PM IST = 18:15 UTC
-    - cron: "15 18 * * 1-5"
+    - cron: "15 10 * * 1-5"
   workflow_dispatch:
 
 jobs:
@@ -14,6 +14,11 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
+      - name: Step 0 - Install jq
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y jq
+
       - name: Step 1 - Wake Config Server
         run: |
           echo "📡 Waking Config Server"
@@ -67,7 +72,7 @@ jobs:
           username: ${{ secrets.SMTP_USERNAME }}
           password: ${{ secrets.SMTP_PASSWORD }}
           secure: false
-          subject: Fun Market – Git Data Load Report
+          subject: Fun Market - Git Data Load Report
           to: funstockmarket365@gmail.com,katukojwalaharshavardhan97@gmail.com,ankithachikki123@gmail.com
           from: Fun Market Bot <sunnyharsha320@gmail.com>
           body: |
@@ -93,17 +98,16 @@ jobs:
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
         run: |
           MESSAGE=$(
-            printf "**📢 Fun Market – Git Data Load Report**\n\n"
-            printf "**Time:** 11:45 PM IST\n\n"
-            printf "**Message:** %s\n" "${{ steps.parsed.outputs.message }}"
-            printf "**Status:** %s\n\n" "${{ steps.parsed.outputs.status }}"
-            printf "**Files Loaded:**\n%s\n\n" "${{ steps.parsed.outputs.files }}"
-            printf "_— Fun Market_"
+            printf "📢 Fun Market – Git Data Load Report\n\n"
+            printf "Time: 11:45 PM IST\n\n"
+            printf "Message: %s\n\n" "${{ steps.parsed.outputs.message }}"
+            printf "Status: %s\n\n" "${{ steps.parsed.outputs.status }}"
+            printf "Files Loaded:\n%s\n\n" "${{ steps.parsed.outputs.files }}"
+            printf "-- Fun Market"
           )
 
           curl -s -X POST "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" \
             -d chat_id="${TELEGRAM_CHAT_ID}" \
-            -d parse_mode=Markdown \
             --data-urlencode text="$MESSAGE"
 
       - name: Step 9 - Done
