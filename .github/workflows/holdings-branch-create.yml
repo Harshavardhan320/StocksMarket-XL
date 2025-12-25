@@ -55,7 +55,7 @@ jobs:
             printf "🧾 <b>Branch Name:</b> %s\n" "${{ steps.branch.outputs.branch }}"
             printf "🕘 <b>Created At:</b> %s\n" "${{ steps.branch.outputs.time }}"
             printf "📅 <b>Day:</b> %s\n\n" "${{ steps.branch.outputs.day }}"
-            printf "%s\n\n" "$WEEKEND_NOTE" "\n"
+            printf "%s\n\n" "$WEEKEND_NOTE"
             printf "🤖 Fun Market Automation System"
           )
 
