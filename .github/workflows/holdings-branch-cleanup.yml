@@ -1,12 +1,12 @@
-name: Delete Empty Daily Holdings Branch
-
-permissions:
-  contents: write
+name: Cleanup Empty Holdings Branch
 
 on:
   schedule:
-    - cron: '0 18 * * 1-5'   # 11:45 PM IST (Mon–Fri)
+    - cron: "30 15 * * *"   # 9:00 PM IST
   workflow_dispatch:
+
+permissions:
+  contents: write
 
 jobs:
   cleanup-branch:
@@ -18,46 +18,42 @@ jobs:
         with:
           ref: main
           fetch-depth: 0
-          persist-credentials: true
 
-      - name: Check and delete empty holdings branch
-        shell: bash
+      - name: Check and delete empty branch
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
         run: |
-          DATE=$(date -u -d "+5 hours 30 minutes" +"%d-%b-%Y" | tr '[:upper:]' '[:lower:]')
-          BRANCH="holdings-${DATE}"
+          DATE=$(date -u -d "+5 hours 30 minutes" +"%d")
+          MONTH=$(date -u -d "+5 hours 30 minutes" +"%B" | tr '[:upper:]' '[:lower:]')
+          YEAR=$(date -u -d "+5 hours 30 minutes" +"%Y")
+          DAY=$(date -u -d "+5 hours 30 minutes" +"%A")
 
-          echo "🔍 Checking branch: $BRANCH"
+          BRANCH="holdings-${DATE}-${MONTH}-${YEAR}"
+          CHECK_TIME=$(date -u -d "+5 hours 30 minutes" "+%d %B %Y, %I:%M %p IST")
 
           if ! git ls-remote --heads origin "$BRANCH" | grep -q "$BRANCH"; then
-            echo "ℹ️ Branch does not exist. Nothing to do."
+            echo "Branch does not exist. Exiting."
             exit 0
           fi
 
           git fetch origin "$BRANCH"
+          COMMITS=$(git rev-list --count origin/main..origin/"$BRANCH")
 
-          COMMIT_COUNT=$(git rev-list --count origin/main..origin/"$BRANCH")
-
-          if [ "$COMMIT_COUNT" -eq 0 ]; then
-            echo "🗑️ No commits found. Deleting branch."
-
+          if [ "$COMMITS" -eq 0 ]; then
             git push origin --delete "$BRANCH"
 
             MESSAGE=$(
-              printf "**🗑️ Empty Holdings Branch Deleted**\n\n"
-              printf "**Branch Name:** \`%s\`\n" "$BRANCH"
-              printf "**Date & Time:** %s\n\n" "$(date -u -d '+5 hours 30 minutes' '+%d-%b-%Y %I:%M %p IST')"
-              printf "**Reason:** No commits were made today.\n\n"
-              printf "_— Fun Market_"
+              printf "Subject: Empty Holdings Branch Deleted\n\n"
+              printf "Dear Team,\n\n"
+              printf "The following holdings branch was deleted as no commits were made.\n\n"
+              printf "Branch Name: %s\n" "$BRANCH"
+              printf "Checked On: %s (%s)\n\n" "$CHECK_TIME" "$DAY"
+              printf "Reason: No commits found during the day.\n\n"
+              printf "Regards,\nFun Market Automation System"
             )
 
             curl -s -X POST "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" \
               -d chat_id="${TELEGRAM_CHAT_ID}" \
-              -d parse_mode=Markdown \
               --data-urlencode text="$MESSAGE"
-
-          else
-            echo "✅ Branch has commits ($COMMIT_COUNT). Keeping it."
           fi
