@@ -5,8 +5,8 @@ permissions:
 
 on:
   schedule:
-    # 11:45 PM IST = 18:15 UTC
-    - cron: "15 10 * * 1-5"
+    # 10:30 PM IST = 17:00 UTC (Mon–Fri)
+    - cron: "0 17 * * *"
   workflow_dispatch:
 
 jobs:
@@ -36,79 +36,61 @@ jobs:
 
       - name: Step 4 - Wait for services
         run: |
-          echo "⏳ Waiting 5 minutes..."
+          echo "⏳ Waiting 5 minutes for services to be fully ready..."
           sleep 300
 
-      - name: Step 5 - Trigger Git Reader Load
+      - name: Step 5 - Trigger Git Reader Load (WAIT FOR RESPONSE)
         id: load
         run: |
-          echo "🚀 Triggering Git Reader load"
+          echo "🚀 Triggering Git Reader data load..."
 
           RESPONSE=$(curl -s -X POST https://funmarketgitreader.onrender.com/fun-market/git-reader/read)
 
           echo "$RESPONSE" > response.json
-          echo "response<<EOF" >> $GITHUB_OUTPUT
-          cat response.json >> $GITHUB_OUTPUT
-          echo "EOF" >> $GITHUB_OUTPUT
+          echo "Full API Response:"
+          cat response.json
 
-      - name: Step 6 - Parse Response
+      - name: Step 6 - Parse Response + Date Info
         id: parsed
         run: |
-          MESSAGE=$(jq -r '.message // "No message"' response.json)
+          MESSAGE=$(jq -r '.message // "No message returned"' response.json)
           STATUS=$(jq -r '.httpStatusCode // "NA"' response.json)
-          FILES=$(jq -r '.data[]? // empty' response.json | tr '\n' ', ')
+          DATA=$(jq -r '.data // empty' response.json)
 
-          [ -z "$FILES" ] && FILES="No files loaded"
+          DAY=$(date -u -d "+5 hours 30 minutes" +"%A")
+          DATE_TIME=$(date -u -d "+5 hours 30 minutes" "+%d %B %Y, %I:%M %p IST")
+
+          WEEKEND_ALERT=""
+          if [[ "$DAY" == "Saturday" || "$DAY" == "Sunday" ]]; then
+            WEEKEND_ALERT="⚠️ ALERT: This job is running on a weekend."
+          fi
 
           echo "message=$MESSAGE" >> $GITHUB_OUTPUT
           echo "status=$STATUS" >> $GITHUB_OUTPUT
-          echo "files=$FILES" >> $GITHUB_OUTPUT
+          echo "data=$DATA" >> $GITHUB_OUTPUT
+          echo "day=$DAY" >> $GITHUB_OUTPUT
+          echo "datetime=$DATE_TIME" >> $GITHUB_OUTPUT
+          echo "weekend_alert=$WEEKEND_ALERT" >> $GITHUB_OUTPUT
 
-      - name: Step 7 - Send Email
-        uses: dawidd6/action-send-mail@v3
-        with:
-          server_address: ${{ secrets.SMTP_SERVER }}
-          server_port: ${{ secrets.SMTP_PORT }}
-          username: ${{ secrets.SMTP_USERNAME }}
-          password: ${{ secrets.SMTP_PASSWORD }}
-          secure: false
-          subject: Fun Market - Git Data Load Report
-          to: funstockmarket365@gmail.com,katukojwalaharshavardhan97@gmail.com,ankithachikki123@gmail.com
-          from: Fun Market Bot <sunnyharsha320@gmail.com>
-          body: |
-            Hello Team,
-
-            Git Reader refresh completed at 11:45 PM IST.
-
-            Message:
-            ${{ steps.parsed.outputs.message }}
-
-            Status:
-            ${{ steps.parsed.outputs.status }}
-
-            Files Loaded:
-            ${{ steps.parsed.outputs.files }}
-
-            Regards,
-            Fun Market Automation System
-
-      - name: Step 8 - Send Telegram Message
+      - name: Step 7 - Send Telegram Notification
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
         run: |
           MESSAGE=$(
-            printf "📢 Fun Market – Git Data Load Report\n\n"
-            printf "Time: 11:45 PM IST\n\n"
-            printf "Message: %s\n\n" "${{ steps.parsed.outputs.message }}"
-            printf "Status: %s\n\n" "${{ steps.parsed.outputs.status }}"
-            printf "Files Loaded:\n%s\n\n" "${{ steps.parsed.outputs.files }}"
-            printf "-- Fun Market"
+            printf "📢 FUN MARKET – GIT DATA LOAD REPORT\n\n"
+            printf "Date & Time : %s\n" "${{ steps.parsed.outputs.datetime }}"
+            printf "Day         : %s\n\n" "${{ steps.parsed.outputs.day }}"
+            printf "%s\n\n" "${{ steps.parsed.outputs.weekend_alert }}"
+            printf "Message     : %s\n" "${{ steps.parsed.outputs.message }}"
+            printf "Status Code : %s\n\n" "${{ steps.parsed.outputs.status }}"
+            printf "Data Loaded :\n%s\n\n" "${{ steps.parsed.outputs.data }}"
+            printf "-- Fun Market Automation System"
           )
 
           curl -s -X POST "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" \
             -d chat_id="${TELEGRAM_CHAT_ID}" \
             --data-urlencode text="$MESSAGE"
 
-      - name: Step 9 - Done
-        run: echo "✅ All services refreshed successfully"
+      - name: Step 8 - Done
+        run: echo "✅ Auto wake & data refresh completed successfully"
