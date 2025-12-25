@@ -5,7 +5,7 @@ permissions:
 
 on:
   schedule:
-    # 10:30 PM IST = 17:00 UTC (Mon–Fri)
+    # 10:30 PM IST = 17:00 UTC (runs every day)
     - cron: "0 17 * * *"
   workflow_dispatch:
 
@@ -14,83 +14,106 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Step 0 - Install jq
+      - name: Install jq
         run: |
           sudo apt-get update
           sudo apt-get install -y jq
 
-      - name: Step 1 - Wake Config Server
+      - name: Wake Config Server
         run: |
-          echo "📡 Waking Config Server"
           curl -s https://funmarketconfigserver-dckt.onrender.com/actuator/health
 
-      - name: Step 2 - Wake DB Connector
+      - name: Wake DB Connector
         run: |
-          echo "📡 Waking DB Connector"
           curl -s https://funmarketdb.onrender.com/actuator/health
 
-      - name: Step 3 - Wake Git Reader
+      - name: Wake Git Reader
         run: |
-          echo "📡 Waking Git Reader"
           curl -s https://funmarketgitreader.onrender.com/actuator/health
 
-      - name: Step 4 - Wait for services
+      - name: Wait for services
         run: |
-          echo "⏳ Waiting 5 minutes for services to be fully ready..."
           sleep 300
 
-      - name: Step 5 - Trigger Git Reader Load (WAIT FOR RESPONSE)
-        id: load
+      - name: Trigger Git Reader Load
         run: |
-          echo "🚀 Triggering Git Reader data load..."
+          curl -s -X POST https://funmarketgitreader.onrender.com/fun-market/git-reader/read > response.json
 
-          RESPONSE=$(curl -s -X POST https://funmarketgitreader.onrender.com/fun-market/git-reader/read)
-
-          echo "$RESPONSE" > response.json
-          echo "Full API Response:"
-          cat response.json
-
-      - name: Step 6 - Parse Response + Date Info
+      - name: Parse Response and Prepare Outputs
         id: parsed
         run: |
           MESSAGE=$(jq -r '.message // "No message returned"' response.json)
           STATUS=$(jq -r '.httpStatusCode // "NA"' response.json)
-          DATA=$(jq -r '.data // empty' response.json)
+
+          FILE_LIST=$(jq -r '
+            if (.data | type) == "array" then
+              .data[]
+            elif (.data | type) == "string" then
+              .data
+            else
+              empty
+            end
+          ' response.json)
+
+          if [ -z "$FILE_LIST" ]; then
+            FORMATTED_FILES="• No files processed"
+          else
+            FORMATTED_FILES=$(echo "$FILE_LIST" | sed 's/^/• /')
+          fi
 
           DAY=$(date -u -d "+5 hours 30 minutes" +"%A")
           DATE_TIME=$(date -u -d "+5 hours 30 minutes" "+%d %B %Y, %I:%M %p IST")
 
-          WEEKEND_ALERT=""
+          ALERT=""
           if [[ "$DAY" == "Saturday" || "$DAY" == "Sunday" ]]; then
-            WEEKEND_ALERT="⚠️ ALERT: This job is running on a weekend."
+            ALERT="ALERT : This execution happened on a weekend."
           fi
 
-          echo "message=$MESSAGE" >> $GITHUB_OUTPUT
-          echo "status=$STATUS" >> $GITHUB_OUTPUT
-          echo "data=$DATA" >> $GITHUB_OUTPUT
-          echo "day=$DAY" >> $GITHUB_OUTPUT
-          echo "datetime=$DATE_TIME" >> $GITHUB_OUTPUT
-          echo "weekend_alert=$WEEKEND_ALERT" >> $GITHUB_OUTPUT
+          {
+            echo "message<<EOF"
+            echo "$MESSAGE"
+            echo "EOF"
 
-      - name: Step 7 - Send Telegram Notification
+            echo "status=$STATUS"
+
+            echo "files<<EOF"
+            echo "$FORMATTED_FILES"
+            echo "EOF"
+
+            echo "day=$DAY"
+            echo "datetime=$DATE_TIME"
+
+            echo "alert<<EOF"
+            echo "$ALERT"
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Send Telegram Notification
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
         run: |
           MESSAGE=$(
-            printf "📢 FUN MARKET – GIT DATA LOAD REPORT\n\n"
-            printf "Date & Time : %s\n" "${{ steps.parsed.outputs.datetime }}"
-            printf "Day         : %s\n\n" "${{ steps.parsed.outputs.day }}"
-            printf "%s\n\n" "${{ steps.parsed.outputs.weekend_alert }}"
-            printf "Message     : %s\n" "${{ steps.parsed.outputs.message }}"
-            printf "Status Code : %s\n\n" "${{ steps.parsed.outputs.status }}"
-            printf "Data Loaded :\n%s\n\n" "${{ steps.parsed.outputs.data }}"
-            printf "-- Fun Market Automation System"
+            printf "<b>📢 FUN MARKET – GIT DATA LOAD SUCCESS</b>\n\n"
+            printf "<b>🗓 Date & Time:</b> %s\n" "${{ steps.parsed.outputs.datetime }}"
+            printf "<b>📅 Day:</b> %s\n\n" "${{ steps.parsed.outputs.day }}"
+
+            if [ -n "${{ steps.parsed.outputs.alert }}" ]; then
+              printf "🚨 <b>%s</b>\n\n" "${{ steps.parsed.outputs.alert }}"
+            fi
+
+            printf "<b>✅ Execution Message:</b>\n"
+            printf "<i>%s</i>\n\n" "${{ steps.parsed.outputs.message }}"
+
+            printf "<b>📊 Status Code:</b> %s\n\n" "${{ steps.parsed.outputs.status }}"
+
+            printf "<b>📂 Files Processed:</b>\n"
+            printf "%s\n\n" "${{ steps.parsed.outputs.files }}"
+
+            printf "<i>🤖 Fun Market Automation System</i>"
           )
 
           curl -s -X POST "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" \
             -d chat_id="${TELEGRAM_CHAT_ID}" \
+            -d parse_mode=HTML \
             --data-urlencode text="$MESSAGE"
-
-      - name: Step 8 - Done
-        run: echo "✅ Auto wake & data refresh completed successfully"
