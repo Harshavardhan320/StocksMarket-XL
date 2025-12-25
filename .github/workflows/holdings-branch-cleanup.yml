@@ -2,7 +2,8 @@ name: Cleanup Empty Holdings Branch
 
 on:
   schedule:
-    - cron: "30 15 * * *"   # 9:00 PM IST
+    # 9:00 PM IST = 15:30 UTC
+    - cron: "30 15 * * *"
   workflow_dispatch:
 
 permissions:
@@ -19,7 +20,7 @@ jobs:
           ref: main
           fetch-depth: 0
 
-      - name: Check and delete empty branch
+      - name: Check and delete empty holdings branch
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
@@ -28,12 +29,12 @@ jobs:
           MONTH=$(date -u -d "+5 hours 30 minutes" +"%B" | tr '[:upper:]' '[:lower:]')
           YEAR=$(date -u -d "+5 hours 30 minutes" +"%Y")
           DAY=$(date -u -d "+5 hours 30 minutes" +"%A")
+          TIME=$(date -u -d "+5 hours 30 minutes" "+%d %B %Y, %I:%M %p IST")
 
           BRANCH="holdings-${DATE}-${MONTH}-${YEAR}"
-          CHECK_TIME=$(date -u -d "+5 hours 30 minutes" "+%d %B %Y, %I:%M %p IST")
 
           if ! git ls-remote --heads origin "$BRANCH" | grep -q "$BRANCH"; then
-            echo "Branch does not exist. Exiting."
+            echo "Branch does not exist. Nothing to clean."
             exit 0
           fi
 
@@ -44,16 +45,18 @@ jobs:
             git push origin --delete "$BRANCH"
 
             MESSAGE=$(
-              printf "Subject: Empty Holdings Branch Deleted\n\n"
-              printf "Dear Team,\n\n"
-              printf "The following holdings branch was deleted as no commits were made.\n\n"
-              printf "Branch Name: %s\n" "$BRANCH"
-              printf "Checked On: %s (%s)\n\n" "$CHECK_TIME" "$DAY"
-              printf "Reason: No commits found during the day.\n\n"
-              printf "Regards,\nFun Market Automation System"
+              printf "<b>🗑️ EMPTY HOLDINGS BRANCH DELETED</b>\n\n"
+              printf "👋 Dear Team,\n\n"
+              printf "The following holdings branch was deleted as no commits were made during the day.\n\n"
+              printf "🧾 <b>Branch Name:</b> %s\n" "$BRANCH"
+              printf "🕘 <b>Checked At:</b> %s\n" "$TIME"
+              printf "📅 <b>Day:</b> %s\n\n" "$DAY"
+              printf "❗ <b>Reason:</b> No commits found.\n\n"
+              printf "🤖 Fun Market Automation System"
             )
 
             curl -s -X POST "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" \
               -d chat_id="${TELEGRAM_CHAT_ID}" \
+              -d parse_mode=HTML \
               --data-urlencode text="$MESSAGE"
           fi
