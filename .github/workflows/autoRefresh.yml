@@ -88,6 +88,37 @@ jobs:
             echo "EOF"
           } >> "$GITHUB_OUTPUT"
 
+      - name: Send Email Notification
+        uses: dawidd6/action-send-mail@v3
+        with:
+          server_address: ${{ secrets.SMTP_SERVER }}
+          server_port: ${{ secrets.SMTP_PORT }}
+          username: ${{ secrets.SMTP_USERNAME }}
+          password: ${{ secrets.SMTP_PASSWORD }}
+          secure: false
+          subject: "Fun Market – Git Data Load Success Report"
+          to: funstockmarket365@gmail.com,katukojwalaharshavardhan97@gmail.com,ankithachikki123@gmail.com
+          from: "Fun Market Automation <sunnyharsha320@gmail.com>"
+          body: |
+            FUN MARKET – GIT DATA LOAD SUCCESS
+
+            Date & Time : ${{ steps.parsed.outputs.datetime }}
+            Day         : ${{ steps.parsed.outputs.day }}
+
+            ${{ steps.parsed.outputs.alert }}
+
+            Execution Message:
+            ${{ steps.parsed.outputs.message }}
+
+            Status Code:
+            ${{ steps.parsed.outputs.status }}
+
+            Files Processed:
+            ${{ steps.parsed.outputs.files }}
+
+            --
+            Fun Market Automation System
+
       - name: Send Telegram Notification
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
