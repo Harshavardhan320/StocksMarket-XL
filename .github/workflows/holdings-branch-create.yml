@@ -1,12 +1,12 @@
 name: Create Daily Holdings Branch
 
-permissions:
-  contents: write
-
 on:
   schedule:
-    - cron: '0 6 * * 1-5'   # 11:30 AM IST (Mon–Fri)
+    - cron: "0 4 * * *"   # 9:30 AM IST
   workflow_dispatch:
+
+permissions:
+  contents: write
 
 jobs:
   create-branch:
@@ -18,35 +18,45 @@ jobs:
         with:
           ref: main
           fetch-depth: 0
-          persist-credentials: true
 
-      - name: Create holdings branch
+      - name: Create branch
         id: branch
         run: |
-          DATE=$(date -u -d "+5 hours 30 minutes" +"%d-%b-%Y" | tr '[:upper:]' '[:lower:]')
-          BRANCH="holdings-${DATE}"
+          DATE=$(date -u -d "+5 hours 30 minutes" +"%d")
+          MONTH=$(date -u -d "+5 hours 30 minutes" +"%B" | tr '[:upper:]' '[:lower:]')
+          YEAR=$(date -u -d "+5 hours 30 minutes" +"%Y")
+          DAY=$(date -u -d "+5 hours 30 minutes" +"%A")
+
+          BRANCH="holdings-${DATE}-${MONTH}-${YEAR}"
+          CREATED_AT=$(date -u -d "+5 hours 30 minutes" "+%d %B %Y, %I:%M %p IST")
 
           git checkout -b "$BRANCH"
           git push origin "$BRANCH"
 
           echo "branch=$BRANCH" >> $GITHUB_OUTPUT
+          echo "day=$DAY" >> $GITHUB_OUTPUT
+          echo "time=$CREATED_AT" >> $GITHUB_OUTPUT
 
-      - name: Notify Telegram (Branch Created)
-        shell: bash
+      - name: Notify Telegram
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
         run: |
+          WEEKEND_NOTE=""
+          if [[ "${{ steps.branch.outputs.day }}" == "Saturday" || "${{ steps.branch.outputs.day }}" == "Sunday" ]]; then
+            WEEKEND_NOTE="Note: This is a weekend branch."
+          fi
+
           MESSAGE=$(
-            printf "**📌 Daily Holdings Branch Created**\n\n"
-            printf "**Branch Name:** \`%s\`\n" "${{ steps.branch.outputs.branch }}"
-            printf "**Date & Time:** %s\n\n" "$(date -u -d '+5 hours 30 minutes' '+%d-%b-%Y %I:%M %p IST')"
-            printf "**Status:** Successfully created.\n\n"
-            printf "This branch is available for today’s holdings updates.\n\n"
-            printf "_— Fun Stock Market_"
+            printf "Subject: Daily Holdings Branch Created\n\n"
+            printf "Dear Team,\n\n"
+            printf "A new daily holdings branch has been created successfully.\n\n"
+            printf "Branch Name: %s\n" "${{ steps.branch.outputs.branch }}"
+            printf "Created On: %s (%s)\n\n" "${{ steps.branch.outputs.time }}" "${{ steps.branch.outputs.day }}"
+            printf "%s\n\n" "$WEEKEND_NOTE"
+            printf "Regards,\nFun Market Automation System"
           )
 
           curl -s -X POST "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" \
             -d chat_id="${TELEGRAM_CHAT_ID}" \
-            -d parse_mode=Markdown \
             --data-urlencode text="$MESSAGE"
