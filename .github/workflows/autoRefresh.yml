@@ -5,7 +5,7 @@ permissions:
 
 on:
   schedule:
-    # 10:30 PM IST = 17:00 UTC (runs every day)
+    # 10:30 PM IST = 17:00 UTC
     - cron: "0 17 * * *"
   workflow_dispatch:
 
@@ -14,79 +14,79 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Install jq
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y jq
-
       - name: Wake Config Server
-        run: |
-          curl -s https://funmarketconfigserver-dckt.onrender.com/actuator/health
+        run: curl -s https://funmarketconfigserver-dckt.onrender.com/actuator/health || true
 
       - name: Wake DB Connector
-        run: |
-          curl -s https://funmarketdb.onrender.com/actuator/health
+        run: curl -s https://funmarketdb.onrender.com/actuator/health || true
 
       - name: Wake Git Reader
-        run: |
-          curl -s https://funmarketgitreader.onrender.com/actuator/health
+        run: curl -s https://funmarketgitreader.onrender.com/actuator/health || true
 
       - name: Wait for services
-        run: |
-          sleep 300
+        run: sleep 300
 
       - name: Trigger Git Reader Load
         run: |
-          curl -s -X POST https://funmarketgitreader.onrender.com/fun-market/git-reader/read > response.json
+          curl -s -X POST \
+            https://funmarketgitreader.onrender.com/fun-market/git-reader/read \
+            -o response.json
 
-      - name: Parse Response and Prepare Outputs
+      - name: Parse response using Python
         id: parsed
         run: |
-          MESSAGE=$(jq -r '.message // "No message returned"' response.json)
-          STATUS=$(jq -r '.httpStatusCode // "NA"' response.json)
+          python3 << 'EOF'
+          import json
+          from datetime import datetime, timedelta
+          import os
 
-          FILE_LIST=$(jq -r '
-            if (.data | type) == "array" then
-              .data[]
-            elif (.data | type) == "string" then
-              .data
-            else
-              empty
-            end
-          ' response.json)
+          # Defaults
+          message = "No message returned"
+          status = "NA"
+          files = ["No files processed"]
 
-          if [ -z "$FILE_LIST" ]; then
-            FORMATTED_FILES="• No files processed"
-          else
-            FORMATTED_FILES=$(echo "$FILE_LIST" | sed 's/^/• /')
-          fi
+          # Read response
+          try:
+              with open("response.json", "r", encoding="utf-8") as f:
+                  data = json.load(f)
 
-          DAY=$(date -u -d "+5 hours 30 minutes" +"%A")
-          DATE_TIME=$(date -u -d "+5 hours 30 minutes" "+%d %B %Y, %I:%M %p IST")
+              message = data.get("message", message)
+              status = str(data.get("httpStatusCode", status))
 
-          ALERT=""
-          if [[ "$DAY" == "Saturday" || "$DAY" == "Sunday" ]]; then
-            ALERT="ALERT : This execution happened on a weekend."
-          fi
+              raw_files = data.get("data")
+              if isinstance(raw_files, list):
+                  files = raw_files
+              elif isinstance(raw_files, str):
+                  files = [raw_files]
 
-          {
-            echo "message<<EOF"
-            echo "$MESSAGE"
-            echo "EOF"
+          except Exception:
+              message = "Non-JSON or invalid response received"
+              status = "ERROR"
+              files = ["Response was not valid JSON"]
 
-            echo "status=$STATUS"
+          # Format file list
+          formatted_files = "\n".join(f"• {f}" for f in files)
 
-            echo "files<<EOF"
-            echo "$FORMATTED_FILES"
-            echo "EOF"
+          # IST time
+          ist = datetime.utcnow() + timedelta(hours=5, minutes=30)
+          day = ist.strftime("%A")
+          datetime_str = ist.strftime("%d %B %Y, %I:%M %p IST")
 
-            echo "day=$DAY"
-            echo "datetime=$DATE_TIME"
+          alert = ""
+          if day in ("Saturday", "Sunday"):
+              alert = "🚨 ALERT: This execution happened on a weekend."
 
-            echo "alert<<EOF"
-            echo "$ALERT"
-            echo "EOF"
-          } >> "$GITHUB_OUTPUT"
+          # Write outputs
+          with open(os.environ["GITHUB_OUTPUT"], "a") as out:
+              out.write(f"message={message}\n")
+              out.write(f"status={status}\n")
+              out.write("files<<EOF\n")
+              out.write(f"{formatted_files}\n")
+              out.write("EOF\n")
+              out.write(f"day={day}\n")
+              out.write(f"datetime={datetime_str}\n")
+              out.write(f"alert={alert}\n")
+          EOF
 
       - name: Send Email Notification
         uses: dawidd6/action-send-mail@v3
@@ -96,11 +96,11 @@ jobs:
           username: ${{ secrets.SMTP_USERNAME }}
           password: ${{ secrets.SMTP_PASSWORD }}
           secure: false
-          subject: "Fun Market – Git Data Load Success Report"
+          subject: "Fun Market – Git Data Load Report"
           to: funstockmarket365@gmail.com,katukojwalaharshavardhan97@gmail.com,ankithachikki123@gmail.com
           from: "Fun Market Automation <sunnyharsha320@gmail.com>"
           body: |
-            FUN MARKET – GIT DATA LOAD SUCCESS
+            FUN MARKET – GIT DATA LOAD REPORT
 
             Date & Time : ${{ steps.parsed.outputs.datetime }}
             Day         : ${{ steps.parsed.outputs.day }}
@@ -124,27 +124,24 @@ jobs:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
         run: |
-          MESSAGE=$(
-            printf "<b>📢 FUN MARKET – GIT DATA LOAD SUCCESS</b>\n\n"
-            printf "<b>🗓 Date & Time:</b> %s\n" "${{ steps.parsed.outputs.datetime }}"
-            printf "<b>📅 Day:</b> %s\n\n" "${{ steps.parsed.outputs.day }}"
+          TEXT="<b>📢 FUN MARKET – GIT DATA LOAD REPORT</b>
 
-            if [ -n "${{ steps.parsed.outputs.alert }}" ]; then
-              printf "🚨 <b>%s</b>\n\n" "${{ steps.parsed.outputs.alert }}"
-            fi
-
-            printf "<b>✅ Execution Message:</b>\n"
-            printf "<i>%s</i>\n\n" "${{ steps.parsed.outputs.message }}"
-
-            printf "<b>📊 Status Code:</b> %s\n\n" "${{ steps.parsed.outputs.status }}"
-
-            printf "<b>📂 Files Processed:</b>\n"
-            printf "%s\n\n" "${{ steps.parsed.outputs.files }}"
-
-            printf "<i>🤖 Fun Market Automation System</i>"
-          )
+          <b>🗓 Date & Time:</b> ${{ steps.parsed.outputs.datetime }}
+          <b>📅 Day:</b> ${{ steps.parsed.outputs.day }}
+          
+          ${{ steps.parsed.outputs.alert }}
+          
+          <b>📨 Execution Message:</b>
+          <i>${{ steps.parsed.outputs.message }}</i>
+          
+          <b>📊 Status Code:</b> ${{ steps.parsed.outputs.status }}
+          
+          <b>📂 Files Processed:</b>
+          ${{ steps.parsed.outputs.files }}
+          
+          <i>🤖 Fun Market Automation System</i>"
 
           curl -s -X POST "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" \
             -d chat_id="${TELEGRAM_CHAT_ID}" \
             -d parse_mode=HTML \
-            --data-urlencode text="$MESSAGE"
+            --data-urlencode text="$TEXT"
