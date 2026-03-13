@@ -38,23 +38,25 @@ jobs:
         run: curl -s https://funmarketconfigserver-dckt.onrender.com/actuator/health || true
 
       - name: Wait for Config Server
-        run: sleep 100
+        run: sleep 300
 
       - name: Wake DB Connector
         run: curl -s https://funmarketdb.onrender.com/actuator/health || true
 
       - name: Wait for DB
-        run: sleep 100
+        run: sleep 300
 
       - name: Wake Git Reader
         run: curl -s https://funmarketgitreader.onrender.com/actuator/health || true
 
       - name: Wait for Git Reader
-        run: sleep 100
+        run: sleep 300
 
       - name: Trigger File Processing
         run: |
-          curl -s -X POST           https://funmarketgitreader.onrender.com/fun-market/git-reader/filePreInformation           -o response.json
+          curl -s -X POST \
+          https://funmarketgitreader.onrender.com/fun-market/git-reader/filePreInformation \
+          -o response.json
 
       - name: Process Response and Send Notifications
         env:
@@ -76,7 +78,7 @@ jobs:
           CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 
           SMTP_SERVER = os.getenv("SMTP_SERVER")
-          SMTP_PORT = int(os.getenv("SMTP_PORT", "587"))
+          SMTP_PORT = int(os.getenv("SMTP_PORT"))
           SMTP_USERNAME = os.getenv("SMTP_USERNAME")
           SMTP_PASSWORD = os.getenv("SMTP_PASSWORD")
 
@@ -90,68 +92,58 @@ jobs:
               return " ".join(formatted)
 
           def build_message(file):
+
               sub_commits=format_commits(file.get("commitMessagesInSubBranch",{}))
               main_commits=format_commits(file.get("commitMessagesInMainBranch",{}))
 
               return f"""
-              🚀 GitHub File Processing Completed
-
-              📄 File Details
-              --------------------------------
-              File Name : {file.get("fileName")}
-              Folder : {file.get("fileFolderName")}
-              Records Processed : {file.get("numberOfRecords")}
-              Status : {file.get("fileprocessingStatus")}
-              Validation : {file.get("fileValidationStatus")}
-
-              📅 GitHub Activity
-              --------------------------------
-              Created In Sub Branch : {file.get("gitFileCreationDateAndTimeInSubBranch")}
-              MR Approved : {file.get("fileMRApprovedDateAndTime")}
-              Merged To Main : {file.get("fileCreationAndMergedIntoMainBranchDateAndTime")}
-
-              👤 User
-              --------------------------------
-              Pushed By : {file.get("gitHubFileInToSubBranchPusherName")}
-              Merged By : {file.get("fileGithubFileMergedIntoMainBranchMergerName")}
-
-              💬 Commit History
-              --------------------------------
-              Sub Branch : {sub_commits}
-              Main Branch : {main_commits}
-
-              ✅ {file.get("fileProcessingError")}
-              """
+            🚀 GitHub File Processing Completed
+            
+            📄 File Details
+            --------------------------------
+            File Name : {file.get("fileName")}
+            Folder : {file.get("fileFolderName")}
+            Records Processed : {file.get("numberOfRecords")}
+            Status : {file.get("fileprocessingStatus")}
+            Validation : {file.get("fileValidationStatus")}
+            
+            📅 GitHub Activity
+            --------------------------------
+            Created In Sub Branch : {file.get("gitFileCreationDateAndTimeInSubBranch")}
+            MR Approved : {file.get("fileMRApprovedDateAndTime")}
+            Merged To Main : {file.get("fileCreationAndMergedIntoMainBranchDateAndTime")}
+            
+            👤 User
+            --------------------------------
+            Pushed By : {file.get("gitHubFileInToSubBranchPusherName")}
+            Merged By : {file.get("fileGithubFileMergedIntoMainBranchMergerName")}
+            
+            💬 Commit History
+            --------------------------------
+            Sub Branch : {sub_commits}
+            Main Branch : {main_commits}
+            
+            ✅ {file.get("fileProcessingError")}
+            """
 
           def send_telegram(message):
-              try:
-                  url=f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
-                  payload={"chat_id":CHAT_ID,"text":message}
-                  requests.post(url,json=payload,timeout=10)
-                  print("Telegram sent successfully")
-              except Exception as e:
-                  print("Telegram error:",e)
+              url=f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
+              payload={
+                  "chat_id":CHAT_ID,
+                  "text":message
+              }
+              requests.post(url,json=payload)
 
           def send_email(message):
-              try:
-                  if not SMTP_SERVER:
-                      print("SMTP_SERVER not configured, skipping email.")
-                      return
+              msg=MIMEText(message)
+              msg["Subject"]="Fun Market – Git File Processing Report"
+              msg["From"]=SMTP_USERNAME
+              msg["To"]=SMTP_USERNAME
 
-                  msg=MIMEText(message)
-                  msg["Subject"]="Fun Market – Git File Processing Report"
-                  msg["From"]=SMTP_USERNAME
-                  msg["To"]=SMTP_USERNAME
-
-                  with smtplib.SMTP(SMTP_SERVER,SMTP_PORT) as server:
-                      server.starttls()
-                      server.login(SMTP_USERNAME,SMTP_PASSWORD)
-                      server.sendmail(SMTP_USERNAME,SMTP_USERNAME,msg.as_string())
-
-                  print("Email sent successfully")
-
-              except Exception as e:
-                  print("Email failed but workflow continues:",e)
+              with smtplib.SMTP(SMTP_SERVER,SMTP_PORT) as server:
+                  server.starttls()
+                  server.login(SMTP_USERNAME,SMTP_PASSWORD)
+                  server.sendmail(SMTP_USERNAME,SMTP_USERNAME,msg.as_string())
 
           with open("response.json","r",encoding="utf-8") as f:
               data=json.load(f)
