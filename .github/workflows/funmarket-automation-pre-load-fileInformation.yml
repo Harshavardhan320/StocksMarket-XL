@@ -38,23 +38,23 @@ jobs:
         run: curl -s https://funmarketconfigserver-dckt.onrender.com/actuator/health || true
 
       - name: Wait for Config Server
-        run: sleep 100
+        run: sleep 80
 
       - name: Wake DB Connector
         run: curl -s https://funmarketdb.onrender.com/actuator/health || true
 
       - name: Wait for DB
-        run: sleep 100
+        run: sleep 80
 
       - name: Wake Git Reader
         run: curl -s https://funmarketgitreader.onrender.com/actuator/health || true
 
       - name: Wait for Git Reader
-        run: sleep 100
+        run: sleep 80
 
       - name: Trigger File Processing
         run: |
-          curl -s -X POST           https://funmarketgitreader.onrender.com/fun-market/git-reader/filePreInformation           -o response.json
+          curl -s -X POST           https://funmarketgitreader.onrender.com/fun-market/git-reader/process-file-information          -o response.json
 
       - name: Process Response and Send Notifications
         env:
