@@ -1,0 +1,165 @@
+name: FunMarket Automation Pipeline
+
+permissions:
+  contents: read
+
+on:
+  pull_request:
+    branches:
+      - main
+    paths:
+      - "dailyPerformance/**"
+      - "monthlyPerformance/**"
+      - "weeklyPerformance/**"
+      - "yearlyPerformance/**"
+
+  schedule:
+    - cron: "0 17 * * *"
+
+  workflow_dispatch:
+
+jobs:
+  funmarket-pipeline:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install Dependencies
+        run: pip install requests
+
+      - name: Wake Config Server
+        run: curl -s https://funmarketconfigserver-dckt.onrender.com/actuator/health || true
+
+      - name: Wait for Config Server
+        run: sleep 300
+
+      - name: Wake DB Connector
+        run: curl -s https://funmarketdb.onrender.com/actuator/health || true
+
+      - name: Wait for DB
+        run: sleep 300
+
+      - name: Wake Git Reader
+        run: curl -s https://funmarketgitreader.onrender.com/actuator/health || true
+
+      - name: Wait for Git Reader
+        run: sleep 300
+
+      - name: Trigger File Processing
+        run: |
+          curl -s -X POST https://funmarketgitreader.onrender.com/fun-market/git-reader/filePreInformation  -o response.json
+
+      - name: Process Response and Send Notifications
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          SMTP_SERVER: ${{ secrets.SMTP_SERVER }}
+          SMTP_PORT: ${{ secrets.SMTP_PORT }}
+          SMTP_USERNAME: ${{ secrets.SMTP_USERNAME }}
+          SMTP_PASSWORD: ${{ secrets.SMTP_PASSWORD }}
+        run: |
+            python3 << 'EOF'
+            import json
+            import os
+            import requests
+            import smtplib
+            from email.mime.text import MIMEText
+  
+            TELEGRAM_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
+            CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
+  
+            SMTP_SERVER = os.getenv("SMTP_SERVER")
+            SMTP_PORT = int(os.getenv("SMTP_PORT"))
+            SMTP_USERNAME = os.getenv("SMTP_USERNAME")
+            SMTP_PASSWORD = os.getenv("SMTP_PASSWORD")
+  
+            def format_commits(commit_map):
+                if not commit_map:
+                    return "No commits"
+                commits = list(commit_map.keys())
+                formatted=[]
+                for i,msg in enumerate(commits,start=1):
+                    formatted.append(f"({i}): {msg}")
+                return " ".join(formatted)
+  
+            def build_message(file):
+  
+                sub_commits=format_commits(file.get("commitMessagesInSubBranch",{}))
+                main_commits=format_commits(file.get("commitMessagesInMainBranch",{}))
+  
+                return f"""
+                  🚀 GitHub File Processing Completed
+  
+                  📄 File Details
+                  --------------------------------
+                  File Name        : {file.get("fileName")}
+                  Folder           : {file.get("fileFolderName")}
+                  Records Processed: {file.get("numberOfRecords")}
+                  Status           : {file.get("fileprocessingStatus")}
+                  Validation       : {file.get("fileValidationStatus")}
+  
+                  📅 GitHub Activity
+                  --------------------------------
+                  Created In Sub Branch : {file.get("gitFileCreationDateAndTimeInSubBranch")}
+                  MR Approved           : {file.get("fileMRApprovedDateAndTime")}
+                  Merged To Main        : {file.get("fileCreationAndMergedIntoMainBranchDateAndTime")}
+  
+                  👤 User
+                  --------------------------------
+                  Pushed By : {file.get("gitHubFileInToSubBranchPusherName")}
+                  Merged By : {file.get("fileGithubFileMergedIntoMainBranchMergerName")}
+  
+                  💬 Commit History
+                  --------------------------------
+                  Sub Branch  : {sub_commits}
+                  Main Branch : {main_commits}
+  
+                  ✅ {file.get("fileProcessingError")}
+                """
+  
+            def send_telegram(message):
+                url=f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
+                payload={
+                    "chat_id":CHAT_ID,
+                    "text":message
+                }
+                requests.post(url,json=payload)
+  
+            def send_email(message):
+                msg=MIMEText(message)
+                msg["Subject"]="Fun Market – Git File Processing Report"
+                msg["From"]=SMTP_USERNAME
+                msg["To"]=SMTP_USERNAME
+  
+                with smtplib.SMTP(SMTP_SERVER,SMTP_PORT) as server:
+                    server.starttls()
+                    server.login(SMTP_USERNAME,SMTP_PASSWORD)
+                    server.sendmail(SMTP_USERNAME,SMTP_USERNAME,msg.as_string())
+  
+            with open("response.json","r",encoding="utf-8") as f:
+                data=json.load(f)
+  
+            files=data.get("data",[])
+  
+            if not isinstance(files,list):
+                files=[files]
+  
+            final_message=""
+  
+            for file in files:
+                final_message+=build_message(file)
+                final_message+="\n--------------------------------\n"
+  
+            if not final_message:
+                final_message="No files processed."
+  
+            send_telegram(final_message)
+            send_email(final_message)
+            EOF
