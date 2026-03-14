@@ -1,4 +1,5 @@
-name: FunMarket Automation Pipeline
+
+name: FunMarket File Automation
 
 permissions:
   contents: read
@@ -7,197 +8,273 @@ on:
   push:
     branches:
       - main
-    paths:
-      - "dailyPerformance/**"
-      - "monthlyPerformance/**"
-      - "weeklyPerformance/**"
-      - "yearlyPerformance/**"
-
-  schedule:
-    - cron: "0 17 * * *"
-
-  workflow_dispatch:
 
 jobs:
-  funmarket-pipeline:
+  process-files:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout Repository
+
+      - name: Checkout repository
         uses: actions/checkout@v4
-
-      - name: Setup Python
-        uses: actions/setup-python@v5
         with:
-          python-version: "3.11"
+          fetch-depth: 0
 
-      - name: Install Dependencies
-        run: pip install requests
+
+      ############################################################
+      # Detect changed files
+      ############################################################
+
+      - name: Detect changed files
+        id: changed
+        run: |
+          git diff --name-status ${{ github.event.before }} ${{ github.sha }} > files.txt
+          cat files.txt
+
+
+      ############################################################
+      # Filter only required folders
+      ############################################################
+
+      - name: Filter performance folders
+        run: |
+          python3 << 'EOF'
+          import json
+
+          allowed = [
+            "dailyPerformance/",
+            "weeklyPerformance/",
+            "monthlyPerformance/",
+            "yearlyPerformance/"
+          ]
+
+          files=[]
+          status={}
+
+          with open("files.txt") as f:
+              for line in f:
+                  parts=line.strip().split("\t")
+                  if len(parts) < 2:
+                      continue
+
+                  st,path = parts
+
+                  if any(path.startswith(a) for a in allowed):
+                      files.append(path)
+                      status[path]=st
+
+          data={"files":files,"status":status}
+
+          with open("filtered.json","w") as f:
+              json.dump(data,f)
+
+          print("Filtered Files:",files)
+          EOF
+
+
+      ############################################################
+      # Collect GitHub metadata
+      ############################################################
+
+      - name: Collect file metadata
+        run: |
+          python3 << 'EOF'
+          import json, os, subprocess
+
+          with open("filtered.json") as f:
+              data=json.load(f)
+
+          files=data["files"]
+          status_map=data["status"]
+
+          payload=[]
+
+          for file in files:
+
+              try:
+                  size=os.path.getsize(file)
+              except:
+                  size=0
+
+              filetype=file.split(".")[-1]
+
+              commit_msg=subprocess.getoutput(f'git log -1 --pretty=%B -- "{file}"')
+              author=subprocess.getoutput(f'git log -1 --pretty=%an -- "{file}"')
+              email=subprocess.getoutput(f'git log -1 --pretty=%ae -- "{file}"')
+              date=subprocess.getoutput(f'git log -1 --pretty=%cI -- "{file}"')
+
+              obj={
+                "fileName":file,
+                "fileType":filetype,
+                "fileSize":size,
+                "gitHubFileStatus":status_map[file],
+                "gitHubFileInToSubBranchPusherName":author,
+                "gitHubFileInToSubBranchPusherEmailId":email,
+                "commitMessagesInSubBranch":commit_msg,
+                "gitFileCreationDateAndTimeInSubBranch":date
+              }
+
+              payload.append(obj)
+
+          with open("payload.json","w") as f:
+              json.dump(payload,f)
+
+          print("Payload ready")
+          EOF
+
+
+      ############################################################
+      # Wake backend services
+      ############################################################
 
       - name: Wake Config Server
         run: curl -s https://funmarketconfigserver-dckt.onrender.com/actuator/health || true
 
-      - name: Wait for Config Server
-        run: sleep 80
+      - name: Wait 30 seconds
+        run: sleep 30
 
-      - name: Wake DB Connector
+      - name: Wake DB
         run: curl -s https://funmarketdb.onrender.com/actuator/health || true
 
-      - name: Wait for DB
-        run: sleep 80
+      - name: Wait 30 seconds
+        run: sleep 30
 
       - name: Wake Git Reader
         run: curl -s https://funmarketgitreader.onrender.com/actuator/health || true
 
-      - name: Wait for Git Reader
-        run: sleep 80
+      - name: Wait 30 seconds
+        run: sleep 30
 
-      - name: Trigger File Processing
+
+      ############################################################
+      # Send file data to application
+      ############################################################
+
+      - name: Send data to application
         run: |
-          curl -s -X POST           https://funmarketgitreader.onrender.com/fun-market/git-reader/process-file-information           -o response.json
+          curl -s -X POST \
+          https://funmarketgitreader.onrender.com/fun-market/git-reader/process-file-information \
+          -H "Content-Type: application/json" \
+          -d @payload.json \
+          -o response.json
 
-      - name: Process Response and Send Notifications
+
+      ############################################################
+      # Send Telegram messages (Auto formatter)
+      ############################################################
+
+      - name: Send Telegram formatted messages
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
-          SMTP_SERVER: ${{ secrets.SMTP_SERVER }}
-          SMTP_PORT: ${{ secrets.SMTP_PORT }}
-          SMTP_USERNAME: ${{ secrets.SMTP_USERNAME }}
-          SMTP_PASSWORD: ${{ secrets.SMTP_PASSWORD }}
         run: |
           python3 << 'EOF'
-          import json
-          import os
-          import requests
-          import smtplib
-          from email.mime.text import MIMEText
+          import json, requests
+          from datetime import datetime, timedelta
 
-          TELEGRAM_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
-          CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
+          BOT_TOKEN = "${{ secrets.TELEGRAM_BOT_TOKEN }}"
+          CHAT_ID = "${{ secrets.TELEGRAM_CHAT_ID }}"
 
-          SMTP_SERVER = os.getenv("SMTP_SERVER")
-          SMTP_PORT = int(os.getenv("SMTP_PORT", "587"))
-          SMTP_USERNAME = os.getenv("SMTP_USERNAME")
-          SMTP_PASSWORD = os.getenv("SMTP_PASSWORD")
+          TELEGRAM_LIMIT = 3900
 
-          def format_commits(commit_map):
-              if not commit_map:
-                  return "No commits"
-              commits = list(commit_map.keys())
-              formatted=[]
-              for i,msg in enumerate(commits,start=1):
-                  formatted.append(f"({i}): {msg}")
-              return " ".join(formatted)
-
-          def build_message(file, api_message):
-              sub_commits=format_commits(file.get("commitMessagesInSubBranch",{}))
-              main_commits=format_commits(file.get("commitMessagesInMainBranch",{}))
-
-              return f"""
-              🚀 GitHub File Processing Completed
-
-              API Message : {api_message}
-
-              File Name : {file.get("fileName")}
-              Folder : {file.get("fileFolderName")}
-              Records Processed : {file.get("numberOfRecords")}
-              Status : {file.get("fileprocessingStatus")}
-              Validation : {file.get("fileValidationStatus")}
-
-              Created In Sub Branch : {file.get("gitFileCreationDateAndTimeInSubBranch")}
-              MR Approved : {file.get("fileMRApprovedDateAndTime")}
-              Merged To Main : {file.get("fileCreationAndMergedIntoMainBranchDateAndTime")}
-
-              Pushed By : {file.get("gitHubFileInToSubBranchPusherName")}
-              Merged By : {file.get("fileGithubFileMergedIntoMainBranchMergerName")}
-
-              Sub Branch Commits : {sub_commits}
-              Main Branch Commits : {main_commits}
-
-              Processing Result : {file.get("fileProcessingError")}
-              """
-
-          def send_telegram(message):
-              try:
-                  url=f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
-                  payload={"chat_id":CHAT_ID,"text":message}
-                  requests.post(url,json=payload,timeout=10)
-              except Exception as e:
-                  print("Telegram error:",e)
-
-          def send_email(message):
-              try:
-                  if not SMTP_SERVER:
-                      return
-
-                  msg=MIMEText(message)
-                  msg["Subject"]="Fun Market – Git File Processing Report"
-                  msg["From"]=SMTP_USERNAME
-                  msg["To"]=SMTP_USERNAME
-
-                  with smtplib.SMTP(SMTP_SERVER,SMTP_PORT) as server:
-                      server.starttls()
-                      server.login(SMTP_USERNAME,SMTP_PASSWORD)
-                      server.sendmail(SMTP_USERNAME,SMTP_USERNAME,msg.as_string())
-              except Exception as e:
-                  print("Email error:",e)
-
-          with open("response.json","r",encoding="utf-8") as f:
+          with open("response.json") as f:
               data=json.load(f)
 
-          final_message=""
-          success_count=0
-          failed_count=0
+          messages=[]
 
-          if isinstance(data,list):
-              for item in data:
-                  file=item.get("data",{})
-                  api_message=item.get("message","")
+          for i,item in enumerate(data,1):
 
-                  status=file.get("fileprocessingStatus")
-                  if status=="PROCESSED":
-                      success_count+=1
-                  else:
-                      failed_count+=1
+              d=item.get("data",{})
 
-                  final_message+=build_message(file,api_message)
-                  final_message+="\n--------------------------------\n"
-          else:
-              file=data.get("data",{})
-              api_message=data.get("message","")
+              block=f"""
+              📄 File {i}
 
-              status=file.get("fileprocessingStatus")
-              if status=="PROCESSED":
-                  success_count+=1
-              else:
-                  failed_count+=1
+              File Name : {d.get("fileName")}
+              File Type : {d.get("fileType")}
+              File Size : {d.get("fileSize")}
 
-              final_message+=build_message(file,api_message)
+              GitHub Status : {d.get("gitHubFileStatus")}
 
-          total=success_count+failed_count
+              Pusher Name : {d.get("gitHubFileInToSubBranchPusherName")}
+              Pusher Email : {d.get("gitHubFileInToSubBranchPusherEmailId")}
 
-          if failed_count==0:
-              overall="SUCCESS"
-          elif success_count==0:
-              overall="FAILED"
-          else:
-              overall="PARTIAL_SUCCESS"
+              Merger Name : {d.get("fileGithubFileMergedIntoMainBranchMergerName")}
+              Merger Email : {d.get("fileGithubFileMergedIntoMainBranchMergerEmailId")}
+
+              Processing Status : {d.get("fileprocessingStatus")}
+
+              Sub Branch Commits : {d.get("commitMessagesInSubBranch")}
+              Main Branch Commits : {d.get("commitMessagesInMainBranch")}
+              """
+
+              messages.append(block)
+
+          ist=datetime.utcnow()+timedelta(hours=5,minutes=30)
 
           summary=f"""
-          📊 Summary
-          Files Processed : {total}
-          Success : {success_count}
-          Failed : {failed_count}
-          Status : {overall}
 
-          Fun Market Automation System
+          📊 Summary
+
+          Files Processed : {len(data)}
+          Execution Time : {ist.strftime("%d %B %Y %I:%M %p IST")}
+
+          🤖 Fun Market Automation System
           """
 
-          final_message+=summary
+          messages.append(summary)
 
-          if not final_message:
-              final_message="No files processed."
+          chunks=[]
+          current=""
 
-          send_telegram(final_message)
-          send_email(final_message)
+          for m in messages:
+              if len(current)+len(m) > TELEGRAM_LIMIT:
+                  chunks.append(current)
+                  current=m
+              else:
+                  current+= "\n\n"+m
+
+          chunks.append(current)
+
+          for msg in chunks:
+
+              url=f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
+
+              payload={
+                "chat_id":CHAT_ID,
+                "text":msg,
+                "parse_mode":"HTML"
+              }
+
+              requests.post(url,data=payload)
+
+          print("Telegram messages sent")
           EOF
+
+
+      ############################################################
+      # Email report
+      ############################################################
+
+      - name: Send Email Report
+        uses: dawidd6/action-send-mail@v3
+        with:
+          server_address: ${{ secrets.SMTP_SERVER }}
+          server_port: ${{ secrets.SMTP_PORT }}
+          username: ${{ secrets.SMTP_USERNAME }}
+          password: ${{ secrets.SMTP_PASSWORD }}
+          secure: false
+          subject: "FunMarket Git File Processing Report"
+          to: funstockmarket365@gmail.com,katukojwalaharshavardhan97@gmail.com
+          from: "FunMarket Automation"
+          body: |
+            FunMarket Git Processing Completed
+
+            Repository : ${{ github.repository }}
+            Branch     : main
+
+            The workflow successfully processed the GitHub files
+            and sent them to the FunMarket application.
+
+            Telegram report has been delivered.
+
+            FunMarket Automation System
