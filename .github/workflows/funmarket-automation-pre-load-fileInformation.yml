@@ -54,7 +54,7 @@ jobs:
 
       - name: Trigger File Processing
         run: |
-          curl -s -X POST           https://funmarketgitreader.onrender.com/fun-market/git-reader/process-file-information          -o response.json
+          curl -s -X POST           https://funmarketgitreader.onrender.com/fun-market/git-reader/process-file-information           -o response.json
 
       - name: Process Response and Send Notifications
         env:
@@ -89,38 +89,32 @@ jobs:
                   formatted.append(f"({i}): {msg}")
               return " ".join(formatted)
 
-          def build_message(file):
+          def build_message(file, api_message):
               sub_commits=format_commits(file.get("commitMessagesInSubBranch",{}))
               main_commits=format_commits(file.get("commitMessagesInMainBranch",{}))
 
               return f"""
               🚀 GitHub File Processing Completed
 
-              📄 File Details
-              --------------------------------
+              API Message : {api_message}
+
               File Name : {file.get("fileName")}
               Folder : {file.get("fileFolderName")}
               Records Processed : {file.get("numberOfRecords")}
               Status : {file.get("fileprocessingStatus")}
               Validation : {file.get("fileValidationStatus")}
 
-              📅 GitHub Activity
-              --------------------------------
               Created In Sub Branch : {file.get("gitFileCreationDateAndTimeInSubBranch")}
               MR Approved : {file.get("fileMRApprovedDateAndTime")}
               Merged To Main : {file.get("fileCreationAndMergedIntoMainBranchDateAndTime")}
 
-              👤 User
-              --------------------------------
               Pushed By : {file.get("gitHubFileInToSubBranchPusherName")}
               Merged By : {file.get("fileGithubFileMergedIntoMainBranchMergerName")}
 
-              💬 Commit History
-              --------------------------------
-              Sub Branch : {sub_commits}
-              Main Branch : {main_commits}
+              Sub Branch Commits : {sub_commits}
+              Main Branch Commits : {main_commits}
 
-              ✅ {file.get("fileProcessingError")}
+              Processing Result : {file.get("fileProcessingError")}
               """
 
           def send_telegram(message):
@@ -128,14 +122,12 @@ jobs:
                   url=f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
                   payload={"chat_id":CHAT_ID,"text":message}
                   requests.post(url,json=payload,timeout=10)
-                  print("Telegram sent successfully")
               except Exception as e:
                   print("Telegram error:",e)
 
           def send_email(message):
               try:
                   if not SMTP_SERVER:
-                      print("SMTP_SERVER not configured, skipping email.")
                       return
 
                   msg=MIMEText(message)
@@ -147,25 +139,61 @@ jobs:
                       server.starttls()
                       server.login(SMTP_USERNAME,SMTP_PASSWORD)
                       server.sendmail(SMTP_USERNAME,SMTP_USERNAME,msg.as_string())
-
-                  print("Email sent successfully")
-
               except Exception as e:
-                  print("Email failed but workflow continues:",e)
+                  print("Email error:",e)
 
           with open("response.json","r",encoding="utf-8") as f:
               data=json.load(f)
 
-          files=data.get("data",[])
-
-          if not isinstance(files,list):
-              files=[files]
-
           final_message=""
+          success_count=0
+          failed_count=0
 
-          for file in files:
-              final_message+=build_message(file)
-              final_message+="\n--------------------------------\n"
+          if isinstance(data,list):
+              for item in data:
+                  file=item.get("data",{})
+                  api_message=item.get("message","")
+
+                  status=file.get("fileprocessingStatus")
+                  if status=="PROCESSED":
+                      success_count+=1
+                  else:
+                      failed_count+=1
+
+                  final_message+=build_message(file,api_message)
+                  final_message+="\n--------------------------------\n"
+          else:
+              file=data.get("data",{})
+              api_message=data.get("message","")
+
+              status=file.get("fileprocessingStatus")
+              if status=="PROCESSED":
+                  success_count+=1
+              else:
+                  failed_count+=1
+
+              final_message+=build_message(file,api_message)
+
+          total=success_count+failed_count
+
+          if failed_count==0:
+              overall="SUCCESS"
+          elif success_count==0:
+              overall="FAILED"
+          else:
+              overall="PARTIAL_SUCCESS"
+
+          summary=f"""
+          📊 Summary
+          Files Processed : {total}
+          Success : {success_count}
+          Failed : {failed_count}
+          Status : {overall}
+
+          Fun Market Automation System
+          """
+
+          final_message+=summary
 
           if not final_message:
               final_message="No files processed."
