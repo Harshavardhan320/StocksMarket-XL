@@ -1,8 +1,8 @@
-
-name: FunMarket Processor
+name: Pre-Processing fileInformation
 
 permissions:
   contents: read
+  pull-requests: read
 
 on:
   push:
@@ -20,35 +20,46 @@ jobs:
         with:
           fetch-depth: 0
 
+
 ############################################################
 # STEP 1 — Ensure commit is merged into main
 ############################################################
 
       - name: Check merge commit
+        id: mergecheck
         run: |
           parents=$(git rev-list --parents -n 1 HEAD | wc -w)
+
           if [ "$parents" -lt 3 ]; then
-            echo "Not a merge commit. Exiting workflow."
+            echo "Not a merge commit. Skipping workflow."
+            echo "continue=false" >> $GITHUB_OUTPUT
             exit 0
           fi
+
+          echo "continue=true" >> $GITHUB_OUTPUT
+
 
 ############################################################
 # STEP 2 — Detect changed files
 ############################################################
 
       - name: Detect changed files
+        if: steps.mergecheck.outputs.continue == 'true'
         run: |
           git diff --name-status ${{ github.event.before }} ${{ github.sha }} > files.txt
           cat files.txt
 
+
 ############################################################
-# STEP 3 — Filter only allowed folders
+# STEP 3 — Filter allowed folders
 ############################################################
 
       - name: Filter folders
+        id: filter
+        if: steps.mergecheck.outputs.continue == 'true'
         run: |
           python3 << 'EOF'
-          import json
+          import json, os
 
           allowed=[
             "dailyPerformance/",
@@ -63,8 +74,10 @@ jobs:
           with open("files.txt") as f:
               for line in f:
                   parts=line.strip().split("\t")
-                  if len(parts) < 2:
+
+                  if len(parts)<2:
                       continue
+
                   st,path=parts
 
                   if any(path.startswith(a) for a in allowed):
@@ -72,42 +85,96 @@ jobs:
                       status[path]=st
 
           if len(files)==0:
-              print("No valid folder changes. Exiting.")
-              exit()
+              print("No valid folders changed. Skipping.")
+              with open(os.environ["GITHUB_OUTPUT"],"a") as out:
+                  out.write("continue=false\n")
+              exit(0)
 
           with open("filtered.json","w") as f:
               json.dump({"files":files,"status":status},f)
 
-          print("Accepted files:",files)
+          with open(os.environ["GITHUB_OUTPUT"],"a") as out:
+              out.write("continue=true\n")
           EOF
 
+
 ############################################################
-# STEP 4 — Wake backend services
+# STEP 4 — Wake services
 ############################################################
 
       - name: Wake Config Server
+        if: steps.filter.outputs.continue == 'true'
         run: curl -s https://funmarketconfigserver-dckt.onrender.com/actuator/health || true
 
-      - name: Wait 30 seconds
+      - name: Wait
+        if: steps.filter.outputs.continue == 'true'
         run: sleep 30
 
       - name: Wake DB
+        if: steps.filter.outputs.continue == 'true'
         run: curl -s https://funmarketdb.onrender.com/actuator/health || true
 
-      - name: Wait 30 seconds
+      - name: Wait
+        if: steps.filter.outputs.continue == 'true'
         run: sleep 30
 
       - name: Wake Git Reader
+        if: steps.filter.outputs.continue == 'true'
         run: curl -s https://funmarketgitreader.onrender.com/actuator/health || true
 
-      - name: Wait 30 seconds
+      - name: Wait
+        if: steps.filter.outputs.continue == 'true'
         run: sleep 30
 
+
 ############################################################
-# STEP 5 — Collect required 14 fields
+# STEP 5 — Fetch Pull Request
 ############################################################
 
-      - name: Collect 14 fields
+      - name: Get PR info
+        if: steps.filter.outputs.continue == 'true'
+        run: |
+          curl -s \
+          -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
+          https://api.github.com/repos/${{ github.repository }}/commits/${{ github.sha }}/pulls \
+          -o pr_list.json
+
+
+############################################################
+# STEP 6 — Extract MR fields
+############################################################
+
+      - name: Extract MR fields
+        if: steps.filter.outputs.continue == 'true'
+        run: |
+          python3 << 'EOF'
+          import json
+
+          with open("pr_list.json") as f:
+              prs=json.load(f)
+
+          pr=prs[0] if prs else {}
+
+          assignees=[a["login"] for a in pr.get("assignees",[])]
+
+          data={
+            "fileMRPublisherName":pr.get("user",{}).get("login"),
+            "fileMRApprovedName":pr.get("merged_by",{}).get("login"),
+            "fileMRPublisherDateAndTime":pr.get("created_at"),
+            "AssigneesNames":", ".join(assignees)
+          }
+
+          with open("mr_fields.json","w") as f:
+              json.dump(data,f)
+          EOF
+
+
+############################################################
+# STEP 7 — Build payload
+############################################################
+
+      - name: Build payload
+        if: steps.filter.outputs.continue == 'true'
         run: |
           python3 << 'EOF'
           import json,os,subprocess
@@ -118,6 +185,9 @@ jobs:
           with open("filtered.json") as f:
               data=json.load(f)
 
+          with open("mr_fields.json") as f:
+              mr=json.load(f)
+
           files=data["files"]
           status_map=data["status"]
 
@@ -126,24 +196,34 @@ jobs:
           for path in files:
 
               name=os.path.basename(path)
-              ext=name.split(".")[-1] if "." in name else ""
+              ext=name.split(".")[-1]
 
               try:
                   size=os.path.getsize(path)
               except:
                   size=0
 
-              commit_msg_sub = run(f'git log -1 --pretty=%B -- "{path}"')
-              pusher_name = run(f'git log -1 --pretty=%an -- "{path}"')
-              pusher_email = run(f'git log -1 --pretty=%ae -- "{path}"')
-              sub_date = run(f'git log -1 --pretty=%cI -- "{path}"')
+              pusher_name=run(f'git log -1 --pretty=%an -- "{path}"')
+              pusher_email=run(f'git log -1 --pretty=%ae -- "{path}"')
+              sub_date=run(f'git log -1 --pretty=%cI -- "{path}"')
 
-              merger_name = run('git log -1 --pretty=%cn')
-              merger_email = run('git log -1 --pretty=%ce')
-              main_msg = run('git log -1 --pretty=%B')
-              main_date = run('git log -1 --pretty=%cI')
+              merger_name=run('git log -1 --pretty=%cn')
+              merger_email=run('git log -1 --pretty=%ce')
+              main_date=run('git log -1 --pretty=%cI')
+
+              sub_commits=run(f'git log --pretty=%s -- "{path}"').split("\n")
+              main_commits=run('git log --pretty=%s').split("\n")
+
+              commit_msg_sub=", ".join(
+                f"({i+1}) {msg}" for i,msg in enumerate(sub_commits) if msg
+              )
+
+              commit_msg_main=", ".join(
+                f"({i+1}) {msg}" for i,msg in enumerate(main_commits) if msg
+              )
 
               st=status_map.get(path,"M")
+
               status={
                 "A":"ADDED",
                 "M":"MODIFIED",
@@ -151,20 +231,32 @@ jobs:
               }.get(st,st)
 
               obj={
+
                 "fileName":name,
                 "fileType":ext,
                 "fileSize":size,
+
                 "gitFileCreationDateAndTimeInSubBranch":sub_date,
                 "fileMRApprovedDateAndTime":main_date,
                 "fileCreationAndMergedIntoMainBranchDateAndTime":main_date,
                 "fileModifiedInGitHubDateAndTime":main_date,
+
                 "gitHubFileInToSubBranchPusherName":pusher_name,
+                "gitHubFileInToSubBranchPusherEmailId":pusher_email,
+
                 "fileGithubFileMergedIntoMainBranchMergerName":merger_name,
                 "fileGithubFileMergedIntoMainBranchMergerEmailId":merger_email,
-                "gitHubFileInToSubBranchPusherEmailId":pusher_email,
+
                 "commitMessagesInSubBranch":commit_msg_sub,
-                "commitMessagesInMainBranch":main_msg,
-                "status":status
+                "commitMessagesInMainBranch":commit_msg_main,
+
+                "status":status,
+
+                "fileMRPublisherName":mr.get("fileMRPublisherName"),
+                "fileMRApprovedName":mr.get("fileMRApprovedName"),
+                "fileMRPublisherDateAndTime":mr.get("fileMRPublisherDateAndTime"),
+                "AssigneesNames":mr.get("AssigneesNames")
+
               }
 
               payload.append(obj)
@@ -172,107 +264,18 @@ jobs:
           with open("payload.json","w") as f:
               json.dump(payload,f,indent=2)
 
-          print("Payload built:",payload)
+          print("Payload ready:",payload)
           EOF
 
-############################################################
-# STEP 6 — Send data to application
-############################################################
-      - name: Wait 30 seconds
-        run: sleep 30
 
-      - name: Send payload to application
+############################################################
+# STEP 8 — Send payload to application
+############################################################
+
+      - name: Send payload
+        if: steps.filter.outputs.continue == 'true'
         run: |
-          curl -s -X POST           https://funmarketgitreader.onrender.com/fun-market/git-reader/process-file-information           -H "Content-Type: application/json"           -d @payload.json           -o response.json
-
-############################################################
-# STEP 7 — Format Telegram sections from response
-############################################################
-
-      - name: Build Telegram message
-        run: |
-          python3 << 'EOF'
-          import json
-
-          with open("response.json") as f:
-              data=json.load(f)
-
-          message="🚀 GitHub File Processing Completed\n\n"
-
-          for i,item in enumerate(data,1):
-
-              d=item.get("data",{})
-
-              message+=f"""
-                📄 File {i}
-
-                File Information UUID : {d.get("fileInformationUuid")}
-                File Name : {d.get("fileName")}
-                File Type : {d.get("fileType")}
-                File Size : {d.get("fileSize")}
-                File URI : {d.get("fileUri")}
-                File Folder Name : {d.get("fileFolderName")}
-                File Stock Details UUID : {d.get("fileStockDetailsUuid")}
-
-                GitHub File Status : {d.get("gitHubFileStatus")}
-                Processing Status : {d.get("fileprocessingStatus")}
-
-                Git File Creation Time : {d.get("gitFileCreationDateAndTimeInSubBranch")}
-                MR Approved Time : {d.get("fileMRApprovedDateAndTime")}
-                File Processed Date : {d.get("fileProcessedDateAndTime")}
-
-                File Created & Merged Into Main : {d.get("fileCreationAndMergedIntoMainBranchDateAndTime")}
-                File Modified In GitHub : {d.get("fileModifiedInGitHubDateAndTime")}
-
-                Sub Branch Pusher Name : {d.get("gitHubFileInToSubBranchPusherName")}
-                Sub Branch Pusher Email : {d.get("gitHubFileInToSubBranchPusherEmailId")}
-
-                Main Branch Merger Name : {d.get("fileGithubFileMergedIntoMainBranchMergerName")}
-                Main Branch Merger Email : {d.get("fileGithubFileMergedIntoMainBranchMergerEmailId")}
-
-                Uploaded Into Main Branch Day : {d.get("fileUploadedIntoGitHubMainBranchDay")}
-                Uploaded Into Sub Branch Day : {d.get("fileUploadedIntoGitHubSubBranchDay")}
-
-                Uploaded To Main Branch Working Day : {d.get("isFileUploadedToGitHubMainBranchInWorkingDay")}
-                Uploaded To Sub Branch Working Day : {d.get("isFileUploadedToGitHubSubBranchInWorkingDay")}
-
-                Is File Modified In GitHub : {d.get("isFileModifiedInGitHub")}
-                Is File Deleted In GitHub : {d.get("isFileDeletedInGitHub")}
-                Is File Processed : {d.get("isFileProcessed")}
-
-                Processing Count : {d.get("fileProcessingNumberOfCount")}
-                Processing Error : {d.get("fileProcessingError")}
-
-                Is File Created In Server : {d.get("isFileCreatedInServer")}
-                Is File Deleted In Server : {d.get("isFileDeletedInServer")}
-                Is File Modified In Server : {d.get("isFileModifiedInServer")}
-
-                File Validation Status : {d.get("fileValidationStatus")}
-                Number Of Records : {d.get("numberOfRecords")}
-
-                File Creation Place : {d.get("fileInformationPlaceOfCreation")}
-
-                Record Created Time : {d.get("fileInformationRecordCreatedDateAndTime")}
-                Record Modified Time : {d.get("fileInformationRecordModifiedDateAndTime")}
-
-                File Information Status : {d.get("fileInformationStatus")}
-
-              -------------------------------------------
-              """
-
-          with open("telegram.txt","w") as f:
-              f.write(message)
-          EOF
-
-############################################################
-# STEP 8 — Send Telegram
-############################################################
-
-      - name: Send Telegram
-        env:
-          TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
-          CHAT: ${{ secrets.TELEGRAM_CHAT_ID }}
-        run: |
-          TEXT=$(cat telegram.txt)
-
-          curl -s -X POST https://api.telegram.org/bot$TOKEN/sendMessage             -d chat_id=$CHAT             -d text="$TEXT"
+          curl -s -X POST \
+          https://funmarketgitreader.onrender.com/fun-market/git-reader/process-file-information \
+          -H "Content-Type: application/json" \
+          -d @payload.json
