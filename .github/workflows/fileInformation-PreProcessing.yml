@@ -108,7 +108,7 @@ jobs:
 
       - name: Wait
         if: steps.filter.outputs.continue == 'true'
-        run: sleep 30
+        run: sleep 7
 
       - name: Wake DB
         if: steps.filter.outputs.continue == 'true'
@@ -116,7 +116,7 @@ jobs:
 
       - name: Wait
         if: steps.filter.outputs.continue == 'true'
-        run: sleep 30
+        run: sleep 7
 
       - name: Wake Git Reader
         if: steps.filter.outputs.continue == 'true'
@@ -124,7 +124,7 @@ jobs:
 
       - name: Wait
         if: steps.filter.outputs.continue == 'true'
-        run: sleep 30
+        run: sleep 7
 
 
 ############################################################
