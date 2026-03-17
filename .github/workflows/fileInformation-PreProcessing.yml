@@ -258,6 +258,7 @@ jobs:
 ############################################################
 
       - name: Wake & Wait Services
+        if: steps.filter.outputs.continue == 'true'
         run: |
       
           check_service() {
