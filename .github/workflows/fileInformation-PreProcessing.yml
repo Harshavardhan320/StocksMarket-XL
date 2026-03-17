@@ -95,31 +95,6 @@ jobs:
           EOF
 
 ############################################################
-# STEP 5 — Wake services
-############################################################
-
-      - name: Wake Config Server
-        if: steps.filter.outputs.continue == 'true'
-        run: curl -s https://funmarketconfigserver-dckt.onrender.com/actuator/health || true
-
-      - run: sleep 7
-        if: steps.filter.outputs.continue == 'true'
-
-      - name: Wake DB
-        if: steps.filter.outputs.continue == 'true'
-        run: curl -s https://funmarketdb.onrender.com/actuator/health || true
-
-      - run: sleep 7
-        if: steps.filter.outputs.continue == 'true'
-
-      - name: Wake Git Reader
-        if: steps.filter.outputs.continue == 'true'
-        run: curl -s https://funmarketgitreader.onrender.com/actuator/health || true
-
-      - run: sleep 7
-        if: steps.filter.outputs.continue == 'true'
-
-############################################################
 # STEP 6 — Get PR number
 ############################################################
 
@@ -278,6 +253,62 @@ jobs:
 
           EOF
 
+############################################################
+# STEP 5 — Wake services (optional)
+############################################################
+
+      - name: Wake & Wait Services
+        if: steps.filter.outputs.continue == 'true'
+        run: |
+      
+          check_service() {
+            NAME=$1
+            URL=$2
+      
+            echo "Waiting for $NAME..."
+      
+            for i in {1..60}
+            do
+              if curl -s "$URL" | grep -q "UP"; then
+                echo "$NAME UP ✅"
+                return 0
+              fi
+              echo "$NAME not ready... retry $i"
+              sleep 5
+            done
+      
+            echo "$NAME failed to start ❌"
+            exit 1
+          }
+      
+          ########################################################
+          # 1️⃣ Wait for Config (root dependency)
+          ########################################################
+          check_service "Config Server" "https://funmarketconfigserver-dckt.onrender.com/actuator/health"
+      
+          ########################################################
+          # 2️⃣ Trigger DB & GitReader in parallel (wake)
+          ########################################################
+          echo "Triggering DB & GitReader..."
+      
+          curl -s https://funmarketdb.onrender.com/actuator/health || true &
+          curl -s https://funmarketgitreader.onrender.com/actuator/health || true &
+          wait
+      
+          ########################################################
+          # 3️⃣ Wait for DB & GitReader (parallel wait)
+          ########################################################
+      
+          check_service "DB" "https://funmarketdb.onrender.com/actuator/health" &
+          PID_DB=$!
+      
+          check_service "GitReader" "https://funmarketgitreader.onrender.com/actuator/health" &
+          PID_GR=$!
+      
+          wait $PID_DB
+          wait $PID_GR
+      
+          echo "All services are UP 🚀"
 ############################################################
 # STEP 10 — Send payload
 ############################################################
