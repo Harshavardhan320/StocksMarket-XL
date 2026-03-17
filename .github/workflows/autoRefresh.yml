@@ -24,7 +24,7 @@ jobs:
         run: curl -s https://funmarketgitreader.onrender.com/actuator/health || true
 
       - name: Wait for services
-        run: sleep 300
+        run: sleep 100
 
       - name: Trigger Git Reader Load
         run: |
@@ -88,36 +88,36 @@ jobs:
               out.write(f"alert={alert}\n")
           EOF
 
-      - name: Send Email Notification
-        uses: dawidd6/action-send-mail@v3
-        with:
-          server_address: ${{ secrets.SMTP_SERVER }}
-          server_port: ${{ secrets.SMTP_PORT }}
-          username: ${{ secrets.SMTP_USERNAME }}
-          password: ${{ secrets.SMTP_PASSWORD }}
-          secure: false
-          subject: "Fun Market – Git Data Load Report"
-          to: funstockmarket365@gmail.com,katukojwalaharshavardhan97@gmail.com,ankithachikki123@gmail.com
-          from: "Fun Market Automation <sunnyharsha320@gmail.com>"
-          body: |
-            FUN MARKET – GIT DATA LOAD REPORT
+      # - name: Send Email Notification
+      #   uses: dawidd6/action-send-mail@v3
+      #   with:
+      #     server_address: ${{ secrets.SMTP_SERVER }}
+      #     server_port: ${{ secrets.SMTP_PORT }}
+      #     username: ${{ secrets.SMTP_USERNAME }}
+      #     password: ${{ secrets.SMTP_PASSWORD }}
+      #     secure: false
+      #     subject: "Fun Market – Git Data Load Report"
+      #     to: funstockmarket365@gmail.com,katukojwalaharshavardhan97@gmail.com,ankithachikki123@gmail.com
+      #     from: "Fun Market Automation <sunnyharsha320@gmail.com>"
+      #     body: |
+      #       FUN MARKET – GIT DATA LOAD REPORT
 
-            Date & Time : ${{ steps.parsed.outputs.datetime }}
-            Day         : ${{ steps.parsed.outputs.day }}
+      #       Date & Time : ${{ steps.parsed.outputs.datetime }}
+      #       Day         : ${{ steps.parsed.outputs.day }}
 
-            ${{ steps.parsed.outputs.alert }}
+      #       ${{ steps.parsed.outputs.alert }}
 
-            Execution Message:
-            ${{ steps.parsed.outputs.message }}
+      #       Execution Message:
+      #       ${{ steps.parsed.outputs.message }}
 
-            Status Code:
-            ${{ steps.parsed.outputs.status }}
+      #       Status Code:
+      #       ${{ steps.parsed.outputs.status }}
 
-            Files Processed:
-            ${{ steps.parsed.outputs.files }}
+      #       Files Processed:
+      #       ${{ steps.parsed.outputs.files }}
 
-            --
-            Fun Market Automation System
+      #       --
+      #       Fun Market Automation System
 
       - name: Send Telegram Notification
         env:
