@@ -53,30 +53,30 @@ jobs:
       run: |
         python3 << 'EOF'
         import json, os
-        allowed=[
+        allowed = [
           "dailyPerformance/",
           "weeklyPerformance/",
           "monthlyPerformance/",
           "yearlyPerformance/"
         ]
-        files=[]
-        status={}
+        files = []
+        status = {}
         with open("files.txt") as f:
             for line in f:
-                parts=line.strip().split("\t")
-                if len(parts)<2:
+                parts = line.strip().split("\t")
+                if len(parts) < 2:
                     continue
-                st,path=parts
+                st, path = parts
                 if any(path.startswith(a) for a in allowed):
                     files.append(path)
-                    status[path]=st
-        if len(files)==0:
-            with open(os.environ["GITHUB_OUTPUT"],"a") as out:
+                    status[path] = st
+        if len(files) == 0:
+            with open(os.environ["GITHUB_OUTPUT"], "a") as out:
                 out.write("continue=false\n")
             exit(0)
-        with open("filtered.json","w") as f:
-            json.dump({"files":files,"status":status},f)
-        with open(os.environ["GITHUB_OUTPUT"],"a") as out:
+        with open("filtered.json", "w") as f:
+            json.dump({"files": files, "status": status}, f)
+        with open(os.environ["GITHUB_OUTPUT"], "a") as out:
             out.write("continue=true\n")
         EOF
 ############################################
@@ -149,25 +149,50 @@ jobs:
         https://api.github.com/repos/${{ github.repository }}/pulls/$PR_NUMBER \
         > pr.json
 ############################################
-# STEP 8 — Extract MR fields
+# STEP 8 — Extract MR fields + reviewers
 ############################################
     - name: Extract MR fields
       if: steps.filter.outputs.continue == 'true'
       run: |
+    
         CREATED=$(jq -r '.created_at // ""' pr.json)
         MERGED=$(jq -r '.merged_at // ""' pr.json)
         PUBLISHER=$(jq -r '.user.login // ""' pr.json)
         ASSIGNEES=$(jq -r '[.assignees[]?.login] | join(", ")' pr.json)
+    
         REVIEWS=$(curl -s \
         -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
         https://api.github.com/repos/${{ github.repository }}/pulls/$PR_NUMBER/reviews)
-        echo "REVIEWS:"
+    
+        echo "====== REVIEWS RESPONSE ======"
         echo "$REVIEWS"
-        APPROVED=$(echo "$REVIEWS" | jq -r '[.[]? | select(.state=="APPROVED")][0].submitted_at // ""')
-        APPROVER=$(echo "$REVIEWS" | jq -r '[.[]? | select(.state=="APPROVED")][0].user.login // ""')
+        echo "=============================="
+    
+        # ✅ Check if valid array
+        if echo "$REVIEWS" | jq -e 'type=="array"' > /dev/null 2>&1; then
+    
+          APPROVED=$(echo "$REVIEWS" | jq -r '[.[]? | select(.state=="APPROVED")][0].submitted_at // ""')
+          APPROVER=$(echo "$REVIEWS" | jq -r '[.[]? | select(.state=="APPROVED")][0].user.login // ""')
+    
+          REVIEWERS=$(echo "$REVIEWS" | jq -r '[.[]?.user.login] | unique | join(", ") // ""')
+    
+          # If empty reviewers
+          if [ -z "$REVIEWERS" ]; then
+            REVIEWERS="No Reviews"
+          fi
+    
+        else
+          echo "Reviews API failed → setting default values"
+    
+          APPROVED=""
+          APPROVER=""
+          REVIEWERS="No Reviews"
+        fi
+    
         CREATED_IST=$(date -d "$CREATED" +"%Y-%m-%dT%H:%M:%S" 2>/dev/null || echo "")
         APPROVED_IST=$(date -d "$APPROVED" +"%Y-%m-%dT%H:%M:%S" 2>/dev/null || echo "")
         MERGED_IST=$(date -d "$MERGED" +"%Y-%m-%dT%H:%M:%S" 2>/dev/null || echo "")
+    
         jq -n \
         --arg publisher "$PUBLISHER" \
         --arg approver "$APPROVER" \
@@ -175,14 +200,17 @@ jobs:
         --arg approved "$APPROVED_IST" \
         --arg merged "$MERGED_IST" \
         --arg assignees "$ASSIGNEES" \
+        --arg reviewers "$REVIEWERS" \
         '{
           fileMRPublisherName:$publisher,
           fileMRApprovedName:$approver,
           fileMRPublisherDateAndTime:$created,
           fileMRApprovedDateAndTime:$approved,
           fileCreationAndMergedIntoMainBranchDateAndTime:$merged,
-          AssigneesNames:$assignees
+          AssigneesNames:$assignees,
+          reviewers:$reviewers
         }' > mr_fields.json
+
 ############################################
 # STEP 9 — Build payload
 ############################################
@@ -236,7 +264,8 @@ jobs:
                 "status":status_map.get(status,status),
                 "fileMRPublisherName":mr["fileMRPublisherName"],
                 "fileMRApprovedName":mr["fileMRApprovedName"],
-                "AssigneesNames":mr["AssigneesNames"]
+                "AssigneesNames":mr["AssigneesNames"],
+                "reviewers":mr.get("reviewers")
             }
             payload.append(obj)
         with open("payload.json","w") as f:
