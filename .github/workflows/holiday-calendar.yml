@@ -5,7 +5,7 @@ on:
     branches:
       - main
     paths:
-      - 'holidayCalendar/**'
+      - 'masterData/holidayCalendar/**'
 
 jobs:
   process-holidays:
@@ -28,7 +28,7 @@ jobs:
           cat changes.txt
           JSON_OUTPUT="[]"
           while read status file; do
-            if [[ "$file" != holidayCalendar/* ]]; then
+            if [[ "$file" != masterData/holidayCalendar/* ]]; then
               continue
             fi
             echo "📁 Processing $file with status $status"
@@ -96,7 +96,7 @@ jobs:
         run: |
           echo "🌐 Waking Config Server..."
           for i in {1..6}; do
-            STATUS=$(curl -s https://funmarketconfigserver-dckt.onrender.com/actuator/health | jq -r '.status')
+            STATUS=$(curl -s https://funmarketconfigserver-dckt-wlcj.onrender.com/actuator/health | jq -r '.status')
             echo "Attempt $i → $STATUS"
             if [ "$STATUS" == "UP" ]; then
               echo "✅ Config Server UP"

@@ -105,7 +105,7 @@ jobs:
         }
 
         # Config first
-        check_service "Config" "https://funmarketconfigserver-dckt.onrender.com/actuator/health"
+        check_service "Config" "https://funmarketconfigserver-dckt-wlcj.onrender.com/actuator/health"
 
         # Trigger DB + GitReader
         curl -s https://funmarketdb.onrender.com/actuator/health || true &

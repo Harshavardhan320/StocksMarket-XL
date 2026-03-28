@@ -15,7 +15,7 @@ jobs:
 
     steps:
       - name: Wake Config Server
-        run: curl -s https://funmarketconfigserver-dckt.onrender.com/actuator/health || true
+        run: curl -s https://funmarketconfigserver-dckt-wlcj.onrender.com/actuator/health || true
 
       - name: Wake DB Connector
         run: curl -s https://funmarketdb.onrender.com/actuator/health || true
