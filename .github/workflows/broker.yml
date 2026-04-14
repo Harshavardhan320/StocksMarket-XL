@@ -18,69 +18,78 @@ jobs:
 
       - name: Pre-Activation Logs
         run: |
-          echo "Starting workflow: Preparing to wake up services..."
+          echo "Starting workflow: Isolating specific row changes..."
           echo "Target Folder: masterData/brokers/**"
-
       # - name: Wake up Services
       #   run: |
       #     echo "Waking up Config Server..."
-      #     curl -f -s https://funmarketconfigserver-dckt-wlcj.onrender.com/actuator/health
+      #     curl -f -s https://funmarketconfigserver-dckt.onrender.com/actuator/health
           
       #     echo "Waking up Database Server..."
       #     curl -f -s https://funmarketdb.onrender.com/actuator/health
-      #     # -f ensures the script stops if a server returns an error [cite: 10]
 
-      - name: Parse CSV and Send Data
+      - name: Parse Touched Records and Send Data
         shell: python
         run: |
           import csv
           import json
           import requests
-          import glob
-          import os
-
-          # Find all CSV files in the specific folder path [cite: 4, 6]
-          path = 'masterData/brokers/**/*.csv'
-          files = glob.glob(path, recursive=True)
-          
-          if not files:
-              print("No CSV files found in masterData/brokers/")
-              exit(0)
-
-          all_data = []
-          for file_path in files:
-              print(f"Processing file: {file_path}")
-              with open(file_path, mode='r', encoding='utf-8') as csvfile:
-                  # Uses the first row as keys for the JSON objects [cite: 8, 9]
-                  reader = csv.DictReader(csvfile)
-                  for row in reader:
-                      all_data.append(row)
-
-          # Print collected data to console for visibility [cite: 10]
-          print("Collected JSON Data:")
-          formatted_json = json.dumps(all_data, indent=2)
-          print(formatted_json)
-
-          # Save to local file for the artifact download
-          with open('processed_broker_data.json', 'w') as f:
-              json.dump(all_data, f, indent=2)
-
-          # Send data to the application API [cite: 5, 11]
-          # if all_data:
-          #     url = "https://funmarketdb.onrender.com/broker/addAllBroker"
-          #     print(f"Sending data to {url}...")
-          #     response = requests.post(url, json=all_data)
+          import subprocess
+          import io
+          def get_changed_files():
+              cmd = ["git", "diff-tree", "--no-commit-id", "--name-status", "-r", "HEAD"]
+              result = subprocess.run(cmd, capture_output=True, text=True)
+              lines = result.stdout.strip().split('\n')
+              return [line.split(None, 1) for line in lines if line.strip() and line.split(None, 1)[1].startswith('masterData/brokers/')]
+          def get_records(content_lines):
+              if not content_lines: return {}
+              # Using brokerIdentifier as the unique key to track rows
+              reader = csv.DictReader(content_lines)
+              return {row['brokerIdentifier']: row for row in reader}
+          changed_files = get_changed_files()
+          all_touched_data = []
+          for status, path in changed_files:
+              # 1. Get Current Version
+              current_content = []
+              if status != 'D':
+                  with open(path, 'r') as f: current_content = f.readlines()
               
-          #     if response.status_code == 200:
-          #         print(f"Success! Sent {len(all_data)} records.")
-          #     else:
-          #         print(f"Failed to send data. Status Code: {response.status_code}")
-          #         print(f"Response: {response.text}")
-          #         exit(1)
-
+              # 2. Get Previous Version
+              prev_content = []
+              try:
+                  cmd = ["git", "show", f"HEAD~1:{path}"]
+                  prev_result = subprocess.run(cmd, capture_output=True, text=True)
+                  if prev_result.returncode == 0:
+                      prev_content = prev_result.stdout.splitlines()
+              except: pass
+              curr_dict = get_records(current_content)
+              prev_dict = get_records(prev_content)
+              # Find ADDED or MODIFIED
+              for bid, row in curr_dict.items():
+                  if bid not in prev_dict:
+                      row['recordStatus'] = 'ADDED'
+                      all_touched_data.append(row)
+                  elif row != prev_dict[bid]:
+                      row['recordStatus'] = 'MODIFIED'
+                      all_touched_data.append(row)
+              # Find REMOVED
+              for bid, row in prev_dict.items():
+                  if bid not in curr_dict:
+                      row['recordStatus'] = 'REMOVED'
+                      all_touched_data.append(row)
+          # Output results
+          print(f"Found {len(all_touched_data)} touched records.")
+          print(json.dumps(all_touched_data, indent=2))
+          with open('processed_broker_data.json', 'w') as f:
+              json.dump(all_touched_data, f, indent=2)
+          # Send data to the application API
+          # if all_touched_data:
+          #     url = "https://funmarketdb.onrender.com/broker/addAllBroker"
+          #     response = requests.post(url, json=all_touched_data)
+          #     if response.status_code != 200: exit(1)
       - name: Upload JSON for Download
         uses: actions/upload-artifact@v4
         with:
           name: broker-json-output
           path: processed_broker_data.json
-          retention-days: 7  # Automatically deletes the zip file after 1 week
+          retention-days: 7
