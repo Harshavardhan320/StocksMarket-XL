@@ -80,7 +80,7 @@ jobs:
           print(json.dumps(all_touched_data, indent=2))
           with open('processed_broker_data.json', 'w') as f:
               json.dump(all_touched_data, f, indent=2)
-          Send data to the application API
+          # Send data to the application API
           if all_touched_data:
               url = "https://funmarketdb.onrender.com/fun-market/broker/addAllBrokers"
               response = requests.post(url, json=all_touched_data)
