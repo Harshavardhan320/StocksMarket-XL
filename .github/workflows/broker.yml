@@ -20,50 +20,90 @@ jobs:
         run: |
           echo "Starting workflow: Isolating specific row changes..."
           echo "Target Folder: masterData/brokers/**"
-      # - name: Wake up Services
-      #   run: |
-      #     echo "Waking up Config Server..."
-      #     curl -f -s https://funmarketconfigserver-dckt.onrender.com/actuator/health
-          
-      #     echo "Waking up Database Server..."
-      #     curl -f -s https://funmarketdb.onrender.com/actuator/health
+
+      - name: Wake up Services
+        run: |
+          echo "Waking up Database Server..."
+          curl -f -s https://funmarketdb.onrender.com/actuator/health || echo "Service might be sleeping, continuing..."
 
       - name: Parse Touched Records and Send Data
         shell: python
+        env:
+          BEFORE_SHA: ${{ github.event.before }}
+          AFTER_SHA: ${{ github.sha }}
         run: |
           import csv
           import json
           import requests
           import subprocess
           import io
+          import os
+
           def get_changed_files():
-              cmd = ["git", "diff-tree", "--no-commit-id", "--name-status", "-r", "HEAD"]
+              # Get the commit range from environment variables
+              base = os.getenv('BEFORE_SHA')
+              head = os.getenv('AFTER_SHA')
+              
+              # If it's a fresh repo or first push, base might be all zeros
+              if not base or base == "0000000000000000000000000000000000000000":
+                  cmd = ["git", "diff-tree", "--no-commit-id", "--name-status", "-r", head]
+              else:
+                  cmd = ["git", "diff", "--name-status", f"{base}..{head}"]
+              
+              print(f"DEBUG: Running command: {' '.join(cmd)}")
               result = subprocess.run(cmd, capture_output=True, text=True)
               lines = result.stdout.strip().split('\n')
-              return [line.split(None, 1) for line in lines if line.strip() and line.split(None, 1)[1].startswith('masterData/brokers/')]
+              
+              matched_files = []
+              for line in lines:
+                  if line.strip():
+                      parts = line.split(None, 1)
+                      if len(parts) == 2:
+                          status, path = parts
+                          if path.startswith('masterData/brokers/'):
+                              matched_files.append((status, path))
+              return matched_files
+
           def get_records(content_lines):
               if not content_lines: return {}
-              # Using brokerIdentifier as the unique key to track rows
-              reader = csv.DictReader(content_lines)
-              return {row['brokerIdentifier']: row for row in reader}
+              # Use io.StringIO to handle the list of lines as a file-like object
+              # This is safer for DictReader
+              file_content = "".join(content_lines)
+              reader = csv.DictReader(io.StringIO(file_content))
+              
+              # Use .strip() on keys to handle hidden BOM or spaces from Excel/manual edits
+              return {row.get('brokerIdentifier', '').strip(): row for row in reader if row.get('brokerIdentifier')}
+
           changed_files = get_changed_files()
           all_touched_data = []
+
           for status, path in changed_files:
+              print(f"Processing file: {path} with status: {status}")
+              
               # 1. Get Current Version
               current_content = []
               if status != 'D':
-                  with open(path, 'r') as f: current_content = f.readlines()
-              
+                  try:
+                      with open(path, 'r', encoding='utf-8-sig') as f: 
+                          current_content = f.readlines()
+                  except Exception as e:
+                      print(f"Error reading current file {path}: {e}")
+
               # 2. Get Previous Version
               prev_content = []
-              try:
-                  cmd = ["git", "show", f"HEAD~1:{path}"]
-                  prev_result = subprocess.run(cmd, capture_output=True, text=True)
-                  if prev_result.returncode == 0:
-                      prev_content = prev_result.stdout.splitlines()
-              except: pass
+              base = os.getenv('BEFORE_SHA')
+              if base and base != "0000000000000000000000000000000000000000":
+                  try:
+                      cmd = ["git", "show", f"{base}:{path}"]
+                      prev_result = subprocess.run(cmd, capture_output=True, text=True)
+                      if prev_result.returncode == 0:
+                          prev_content = prev_result.stdout.splitlines()
+                  except:
+                      pass
+
               curr_dict = get_records(current_content)
               prev_dict = get_records(prev_content)
+
               # Find ADDED or MODIFIED
               for bid, row in curr_dict.items():
                   if bid not in prev_dict:
@@ -72,21 +112,34 @@ jobs:
                   elif row != prev_dict[bid]:
                       row['recordStatus'] = 'MODIFIED'
                       all_touched_data.append(row)
+
               # Find REMOVED
               for bid, row in prev_dict.items():
                   if bid not in curr_dict:
                       row['recordStatus'] = 'REMOVED'
                       all_touched_data.append(row)
+
           # Output results
           print(f"Found {len(all_touched_data)} touched records.")
-          print(json.dumps(all_touched_data, indent=2))
+          if all_touched_data:
+              print(json.dumps(all_touched_data, indent=2))
+          
           with open('processed_broker_data.json', 'w') as f:
               json.dump(all_touched_data, f, indent=2)
+
           # Send data to the application API
-          # if all_touched_data:
-          #     url = "https://funmarketdb.onrender.com/broker/addAllBroker"
-          #     response = requests.post(url, json=all_touched_data)
-          #     if response.status_code != 200: exit(1)
+          if all_touched_data:
+              url = "https://funmarketdb.onrender.com/fun-market/broker/addAllBrokers"
+              try:
+                  response = requests.post(url, json=all_touched_data, timeout=30)
+                  print(f"API Response Status: {response.status_code}")
+                  if response.status_code not in [200, 201]:
+                      print(f"Error Response: {response.text}")
+                      exit(1)
+              except Exception as e:
+                  print(f"Failed to connect to API: {e}")
+                  exit(1)
+
       - name: Upload JSON for Download
         uses: actions/upload-artifact@v4
         with:
