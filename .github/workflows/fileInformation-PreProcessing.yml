@@ -88,6 +88,9 @@ jobs:
 ############################################
     - name: Wake & Wait Services
       if: steps.filter.outputs.continue == 'true'
+      env:
+        AGENT_USER: ${{ secrets.FILE_AGENT_USER }}
+        AGENT_PASS: ${{ secrets.FILE_AGENT_PASS }}
       run: |
 
         check_service() {
@@ -96,7 +99,7 @@ jobs:
 
           for i in {1..60}
           do
-            if curl -s "$URL" | grep -q "UP"; then
+            if curl -s ${3:+-u "$3"} "$URL" | grep -q "UP"; then
               echo "$NAME UP ✅"
               return 0
             fi
@@ -108,23 +111,14 @@ jobs:
           exit 1
         }
 
-        # Config first
+        # Config first (no login needed)
         check_service "Config" "https://funmarket-configserver.onrender.com/actuator/health"
 
         # Trigger DB + GitReader
-        curl -s https://funmarketdb.onrender.com/actuator/health || true &
-        curl -s https://funmarketgitreader.onrender.com/actuator/health || true &
-        wait
+        curl -s -u "$AGENT_USER:$AGENT_PASS" https://funmarket-file-agent.duckdns.org/actuator/health || true
 
-        # Wait parallel
-        check_service "DB" "https://funmarketdb.onrender.com/actuator/health" &
-        PID_DB=$!
-
-        check_service "GitReader" "https://funmarketgitreader.onrender.com/actuator/health" &
-        PID_GR=$!
-
-        wait $PID_DB
-        wait $PID_GR
+        # Wait for the file agent
+        check_service "DB" "https://funmarket-file-agent.duckdns.org/actuator/health" "$AGENT_USER:$AGENT_PASS"
 
 ############################################
 # STEP 6 — Get PR number
@@ -281,8 +275,12 @@ jobs:
 ############################################
     - name: Send payload
       if: steps.filter.outputs.continue == 'true'
+      env:
+        AGENT_USER: ${{ secrets.FILE_AGENT_USER }}
+        AGENT_PASS: ${{ secrets.FILE_AGENT_PASS }}
       run: |
-        curl -X POST \
-        https://funmarketgitreader.onrender.com/fun-market/git-reader/process-file-information \
+        curl -f -X POST \
+        -u "$AGENT_USER:$AGENT_PASS" \
+        https://funmarket-file-agent.duckdns.org/fun-market/git-reader/process-file-information \
         -H "Content-Type: application/json" \
         -d @payload.json
