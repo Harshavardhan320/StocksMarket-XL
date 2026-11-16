@@ -283,4 +283,5 @@ jobs:
         -u "$AGENT_USER:$AGENT_PASS" \
         https://funmarket-file-agent.duckdns.org/fun-market/file/information/process-file-information
         -H "Content-Type: application/json" \
+        -H "Accept: application/json" \
         -d @payload.json
