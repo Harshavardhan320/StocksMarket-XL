@@ -94,18 +94,24 @@ jobs:
 ############################################
     - name: Wake & Wait Services
       if: steps.filter.outputs.continue == 'true'
+      env:
+        AGENT_USER: ${{ secrets.FILE_AGENT_USER }}
+        AGENT_PASS: ${{ secrets.FILE_AGENT_PASS }}
       run: |
 
         check_service() {
           NAME=$1
           URL=$2
+          AUTH=$3   # optional "user:pass"; leave empty for open services
 
-          # 6 tries x (5s timeout + 5s sleep) = about 1 minute per service
+          # 6 tries x (5s timeout + 2s sleep) = about 45 seconds per service
           for i in {1..6}
           do
-            # --max-time stops a hanging server from blocking the step.
-            # The HTTP code is printed so the log shows what the server returns.
-            CODE=$(curl -s -o body.txt -w "%{http_code}" --max-time 5 "$URL" || true)
+            if [ -n "$AUTH" ]; then
+              CODE=$(curl -s -o body.txt -w "%{http_code}" --max-time 5 -u "$AUTH" "$URL" || true)
+            else
+              CODE=$(curl -s -o body.txt -w "%{http_code}" --max-time 5 "$URL" || true)
+            fi
             if [ "$CODE" = "200" ] && grep -q "UP" body.txt; then
               echo "$NAME UP ✅"
               return 0
@@ -118,10 +124,11 @@ jobs:
           exit 1
         }
 
-        # /actuator/health is open on both services, so no login is sent.
-        # (Wrong Basic-auth credentials would cause a 401 even on open paths.)
+        # Config server: open health endpoint, no login
         check_service "Config" "https://funmarket-configserver.onrender.com/actuator/health"
-        check_service "DB" "https://funmarket-file-agent.duckdns.org/actuator/health"
+
+        # DB / file-agent: sends the credentials
+        check_service "DB" "https://funmarket-file-agent.duckdns.org/actuator/health" "$AGENT_USER:$AGENT_PASS"
 
 ############################################
 # STEP 6 — Get PR number
