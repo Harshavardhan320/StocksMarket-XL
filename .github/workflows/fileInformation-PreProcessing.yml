@@ -128,7 +128,7 @@ jobs:
         check_service "Config" "https://funmarket-configserver.onrender.com/actuator/health"
 
         # DB / file-agent: sends the credentials
-        check_service "DB" "https://funmarket-file-agent.duckdns.org/actuator/health" "$AGENT_USER:$AGENT_PASS"
+        check_service "DB" "https://funmarket-radar.duckdns.org/actuator/health" "$AGENT_USER:$AGENT_PASS"
 
 ############################################
 # STEP 6 — Get PR number
@@ -315,4 +315,4 @@ jobs:
         -H "Content-Type: application/json" \
         -H "Accept: application/json" \
         -d @payload.json \
-        https://funmarket-file-agent.duckdns.org/fun-market/file/information/process-file-information
+        https://funmarket-radar.duckdns.org/fun-market/file/information/process-file-information
