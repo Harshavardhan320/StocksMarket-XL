@@ -163,7 +163,7 @@ jobs:
         > pr.json
 
 ############################################
-# STEP 8 — Extract MR fields + reviewers
+# STEP 8 — Extract MR fields + reviewers + branches
 ############################################
     - name: Extract MR fields
       if: steps.filter.outputs.continue == 'true'
@@ -173,6 +173,19 @@ jobs:
         MERGED=$(jq -r '.merged_at // ""' pr.json)
         PUBLISHER=$(jq -r '.user.login // ""' pr.json)
         ASSIGNEES=$(jq -r '[.assignees[]?.login] | join(", ")' pr.json)
+
+        # From / To branch names (head = source branch, base = target branch)
+        FROM_BRANCH=$(jq -r '.head.ref // ""' pr.json)
+        TO_BRANCH=$(jq -r '.base.ref // ""' pr.json)
+
+        # Fallbacks if no PR was found
+        if [ -z "$FROM_BRANCH" ]; then
+          # Default merge commit subject: "Merge pull request #12 from owner/branch-name"
+          FROM_BRANCH=$(git log -1 --pretty=%s | sed -nE 's|^Merge pull request #[0-9]+ from [^/]+/(.*)$|\1|p')
+        fi
+        if [ -z "$TO_BRANCH" ]; then
+          TO_BRANCH="${GITHUB_REF_NAME}"
+        fi
 
         if [ -n "$PR_NUMBER" ]; then
           REVIEWS=$(curl -s --max-time 30 \
@@ -225,6 +238,8 @@ jobs:
         --arg merged "$MERGED_IST" \
         --arg assignees "$ASSIGNEES" \
         --arg reviewers "$REVIEWERS" \
+        --arg fromBranch "$FROM_BRANCH" \
+        --arg toBranch "$TO_BRANCH" \
         '{
           fileMRPublisherName:$publisher,
           fileMRApprovedName:$approver,
@@ -232,7 +247,9 @@ jobs:
           fileMRApprovedDateAndTime:$approved,
           fileCreationAndMergedIntoMainBranchDateAndTime:$merged,
           AssigneesNames:$assignees,
-          reviewers:$reviewers
+          reviewers:$reviewers,
+          fromBranchName:$fromBranch,
+          toBranchName:$toBranch
         }' > mr_fields.json
 
 ############################################
@@ -292,7 +309,9 @@ jobs:
                 "fileMRPublisherName":mr["fileMRPublisherName"],
                 "fileMRApprovedName":mr["fileMRApprovedName"],
                 "AssigneesNames":mr["AssigneesNames"],
-                "reviewers":mr.get("reviewers")
+                "reviewers":mr.get("reviewers"),
+                "fromBranchName":mr.get("fromBranchName",""),
+                "toBranchName":mr.get("toBranchName","")
             }
             payload.append(obj)
         with open("payload.json","w") as f:
